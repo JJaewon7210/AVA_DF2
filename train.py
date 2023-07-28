@@ -13,6 +13,7 @@ from pathlib import Path
 # Related third party imports
 import yaml
 import torch
+import matplotlib.pyplot as plt
 import numpy as np
 from torch.cuda import amp
 import torch.optim as optim
@@ -160,7 +161,7 @@ def main(hyp, opt, device, tb_writer):
         for i, (item1, item2) in pbar:
             
             # Batch-01. Input data
-            imgs, labels, paths, _shapes, features = item1 
+            imgs, labels, paths, _shapes, features = item1 ㅊ
             imgs = imgs.to(device, non_blocking=True).float() / 255.0  # uint8 to float32, 0-255 to 0.0-1.0
             '''
              Explanation of variables in item1_batch:
@@ -173,7 +174,20 @@ def main(hyp, opt, device, tb_writer):
             '''
             
             clips, cls, boxes, feature_s, feature_m, feature_l = item2
-            clips = clips.to(device, non_blocking=True)
+            
+            # Move the first frame (T=0) of the first clip (B=0) to CPU for visualization
+            first_frame = clips[0, :, 0, :, :].cpu()
+
+            # Convert the tensor to a NumPy array and bring the values back to the range [0, 255]
+            first_frame_np = (first_frame * 255).byte().numpy()
+
+            # Display the first frame using matplotlib
+            plt.imshow(first_frame_np.transpose(1, 2, 0))
+            plt.axis('off')
+            plt.savefig("first_frame.png")
+            plt.close()
+            
+            clips = clips.to(device, non_blocking=True) # TODO: 노멀라이즈가 되어있음
             '''
              Explanation of variables in item2_batch:
                - clips (torch.float32): Video clips data with shape [B, 3, T, H, W] which has the scale of 0~1
@@ -202,7 +216,7 @@ def main(hyp, opt, device, tb_writer):
                 dummy_loss2 = torch.nn.functional.mse_loss(out_bbox_features[1], torch.randn(out_bbox_features[1].shape, device=device))
                 dummy_loss3 = torch.nn.functional.mse_loss(out_bbox_features[2], torch.randn(out_bbox_features[2].shape, device=device))
                 total_loss = dummy_loss1 + dummy_loss2 + dummy_loss3
-                loss_items = [dummy_loss1, dummy_loss2, dummy_loss3, torch.randn(1)]
+                loss_items = torch.randn(mloss.shape, device=device)
 
             # Batch-03. Backward
             scaler.scale(total_loss).backward()
@@ -230,15 +244,18 @@ def main(hyp, opt, device, tb_writer):
                     
             # Batch-05. Plot
             if plots and i < 10:
-                f = save_dir / f'train_batch{i}.jpg'  # filename
+                f_clo = save_dir / f'train_batch_clo{i}.jpg'  # filename
+                f_act = save_dir / f'train_batch_act{i}.jpg'  # filename
                 
                 preds_clo = torch.cat((out_bbox_infer, out_clo_infer), dim=2)
-                preds_clo = non_max_suppression(preds_clo, conf_thres=0.25, iou_thres=0.25)
+                preds_clo = non_max_suppression(preds_clo, conf_thres=0.75, iou_thres=0.75)
+                preds_clo = torch.cat(preds_clo, dim=0)
                 preds_act = torch.cat((out_bbox_infer, out_act_infer), dim=2)
-                preds_act = non_max_suppression(preds_act, conf_thres=0.25, iou_thres=0.25)
-                print(preds_clo.shape)
+                preds_act = non_max_suppression(preds_act, conf_thres=0.75, iou_thres=0.75)
+                preds_act = torch.cat(preds_act, dim=0)
                 
-                Thread(target=plot_images, args=(model_input, output2target(outputs), None, f), daemon=True).start() #TODO: Make the ouput to target style
+                Thread(target=plot_images, args=(model_input[:, :, -1, :, :], preds_clo, None, f_clo), daemon=True).start()
+                Thread(target=plot_images, args=(model_input[:, :, -1, :, :], preds_act, None, f_act), daemon=True).start()
                 
             elif plots and i == 10 and wandb_logger.wandb:
                 wandb_logger.log({"Mosaics": [wandb_logger.wandb.Image(str(x), caption=x.name) for x in

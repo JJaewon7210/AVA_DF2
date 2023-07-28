@@ -155,11 +155,13 @@ class Ava(torch.utils.data.Dataset):
             #     )
             # ]
             ''' label augmentation '''
-            mean = [v * 255.0 for v in self._data_mean]
-            imgs, boxes = cv2_transform.cdet_augmentation(imgs, boxes, mean=mean)
-            boxes = cv2_transform.box_augmentation(boxes)
-            boxes = cv2_transform.resize_boxes(self._crop_size, boxes, imgs[0].shape[0], imgs[0].shape[1])
+            # mean = [v * 255.0 for v in self._data_mean]
+            # imgs, boxes = cv2_transform.cdet_augmentation(imgs, boxes, mean=mean)
+            # boxes = cv2_transform.box_augmentation(boxes)
+            # boxes = cv2_transform.resize_boxes(self._crop_size, boxes, imgs[0].shape[0], imgs[0].shape[1])
+            # imgs = [cv2_transform.resize(self._crop_size, img) for img in imgs]
             imgs = [cv2_transform.resize(self._crop_size, img) for img in imgs]
+            boxes = cv2_transform.resize_boxes(self._crop_size, boxes, height, width)
 
             if self.random_horizontal_flip:
                 imgs, boxes = cv2_transform.horizontal_flip_list(
@@ -438,6 +440,7 @@ class AvaWithPseudoLabel(Ava):
         ret['feature_s'] = feature_s
         ret['feature_m'] = feature_m
         ret['feature_l'] = feature_l
+        print(keyframe_info)
         
         return ret
         
