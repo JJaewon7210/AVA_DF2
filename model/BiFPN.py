@@ -75,9 +75,9 @@ class BiFPNBlock(nn.Module):
         
         # Calculate Top-Down Pathway
         w1 = self.w1_relu(self.w1)
-        w1 /= torch.sum(w1, dim=0) + self.epsilon
-        w2 = self.w2_relu(self.w2)
-        w2 /= torch.sum(w2, dim=0) + self.epsilon
+        w1 = w1 / (torch.sum(w1, dim=0) + self.epsilon)
+        w2 = self.w2_relu(self.w2) ## <<ERROR
+        w2 = w2 / (torch.sum(w2, dim=0) + self.epsilon)
         
         p7_td = p7_x
         p6_td = self.p6_td(w1[0, 0] * p6_x + w1[1, 0] * F.interpolate(p7_td, scale_factor=2))        

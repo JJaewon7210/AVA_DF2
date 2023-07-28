@@ -22,7 +22,7 @@ from tqdm import tqdm
 from model.model import MTA_F3D_MODEL as Model
 from utils.general import labels_to_class_weights, increment_path, init_seeds, \
     fitness, strip_optimizer, get_latest_run, check_dataset, check_file, check_git_status, check_img_size, \
-    check_requirements, print_mutation, set_logging, colorstr, ConfigObject, data2device
+    check_requirements, print_mutation, set_logging, colorstr, ConfigObject, non_max_suppression
 from utils.wandb_logging.wandb_utils import WandbLogger, check_wandb_resume
 from utils.scheduler import CosineAnnealingWarmupRestarts
 from utils.torch_utils import ModelEMA, select_device, intersect_dicts, torch_distributed_zero_first, is_parallel
@@ -189,47 +189,55 @@ def main(hyp, opt, device, tb_writer):
             imgs_duplicated = imgs.unsqueeze(2).repeat((1, 1, clips.shape[2], 1, 1))
             model_input = torch.cat([imgs_duplicated, clips], dim=0)
             
-            
             # Batch-02. Forward
             with amp.autocast(enabled=cuda):
                 out_bboxs, out_clos, out_acts = model(model_input)
                 
-                print(len(out_bboxs))
-            
-                
-                
-                
-                # total_loss, loss_items = compute_loss(preds, targets) #TODO: Define the loss function
+                out_bbox_infer, out_bbox_features = out_bboxs[0], out_bboxs[1]
+                out_clo_infer, out_clo_features = out_clos[0], out_clos[1]
+                out_act_infer, out_act_features = out_acts[0], out_clos[1]
 
+                # total_loss, loss_items = compute_loss(preds, targets) #TODO: Define the loss function
+                dummy_loss1 = torch.nn.functional.mse_loss(out_bbox_features[0], torch.randn(out_bbox_features[0].shape, device=device))
+                dummy_loss2 = torch.nn.functional.mse_loss(out_bbox_features[1], torch.randn(out_bbox_features[1].shape, device=device))
+                dummy_loss3 = torch.nn.functional.mse_loss(out_bbox_features[2], torch.randn(out_bbox_features[2].shape, device=device))
+                total_loss = dummy_loss1 + dummy_loss2 + dummy_loss3
+                loss_items = [dummy_loss1, dummy_loss2, dummy_loss3, torch.randn(1)]
 
             # Batch-03. Backward
-            scaler.scale(torch.Tensor([0.1])).backward()
+            scaler.scale(total_loss).backward()
             scaler.step(optimizer)  # optimizer.step
             scaler.update()
             optimizer.zero_grad()
-            
 
-            # # Batch-04. Print
-            # mloss = (mloss * i + loss_items) / (i + 1)  # update mean losses
-            # mtotal_loss = (mtotal_loss * i + total_loss) / (i+1) # update mean total_loss
-            # gpu_memory_usage_gb = '%.3gG' % (torch.cuda.memory_reserved() / 1E9 if torch.cuda.is_available() else 0)
-            # output_string = '%g/%g' % (epoch, epochs - 1)  # Display current epoch / total epochs
-            # output_string += ' ' + gpu_memory_usage_gb
-            # for loss_idx in range(len(mloss)):
-            #     output_string += ' ' + '%10.4g' % mloss[loss_idx]
-            # output_string += ' ' + '%10.4g' % mtotal_loss
-            # pbar.set_description(output_string)
+            # Batch-04. Print
+            mloss = (mloss * i + loss_items) / (i + 1)  # update mean losses
+            mtotal_loss = (mtotal_loss * i + total_loss) / (i+1) # update mean total_loss
+            gpu_memory_usage_gb = '%.3gG' % (torch.cuda.memory_reserved() / 1E9 if torch.cuda.is_available() else 0)
+            output_string = '%g/%g' % (epoch, epochs - 1)  # Display current epoch / total epochs
+            output_string += ' ' + gpu_memory_usage_gb
+            for loss_idx in range(len(mloss)):
+                output_string += ' ' + '%10.4g' % mloss[loss_idx]
+            output_string += ' ' + '%10.4g' % mtotal_loss
+            pbar.set_description(output_string)
             
-            # cur_step = epoch * num_batch + i
-            # if (cur_step % opt.log_step == 0) and (cur_step > opt.log_step - 1):
-            #     tags = ['train/box_loss', 'train/obj_loss', 'train/cls(cloth)_loss', 'train/cls(action)_loss', 'lr']
-            #     lr = [x['lr'] for x in optimizer.param_groups]
-            #     for x, tag in zip(list(mloss[:-1]) + lr, tags):
-            #         wandb_logger.log({tag: x})
+            cur_step = epoch * num_batch + i
+            if (cur_step % opt.log_step == 0) and (cur_step > opt.log_step - 1):
+                tags = ['train/box_loss', 'train/obj_loss', 'train/cls(cloth)_loss', 'train/cls(action)_loss', 'lr']
+                lr = [x['lr'] for x in optimizer.param_groups]
+                for x, tag in zip(list(mloss[:-1]) + lr, tags):
+                    wandb_logger.log({tag: x})
                     
             # Batch-05. Plot
             if plots and i < 10:
                 f = save_dir / f'train_batch{i}.jpg'  # filename
+                
+                preds_clo = torch.cat((out_bbox_infer, out_clo_infer), dim=2)
+                preds_clo = non_max_suppression(preds_clo, conf_thres=0.25, iou_thres=0.25)
+                preds_act = torch.cat((out_bbox_infer, out_act_infer), dim=2)
+                preds_act = non_max_suppression(preds_act, conf_thres=0.25, iou_thres=0.25)
+                print(preds_clo.shape)
+                
                 Thread(target=plot_images, args=(model_input, output2target(outputs), None, f), daemon=True).start() #TODO: Make the ouput to target style
                 
             elif plots and i == 10 and wandb_logger.wandb:
