@@ -96,7 +96,6 @@ class Ava(torch.utils.data.Dataset):
         self._max_objs = ava_helper.get_max_objs(
             self._keyframe_indices, self._keyframe_boxes_and_labels
         )
-        self.print_summary()
 
     def print_summary(self):
         logger.info("=== AVA dataset summary ===")
