@@ -1,11 +1,8 @@
-import sys
-import os
-sys.path.append('C:/CNN/AVA_DF2')
-
 import torch
 import torch.nn as nn
 import numpy as np
 import timm
+import math
 import yaml
 from utils.general import ConfigObject
 
@@ -16,12 +13,12 @@ from model.cfam import CFAMBlock
 # Detection Head
 class Detect(nn.Module):
     
-    def __init__(self, no=80, anchors=(), ch=(), training=True):  # detection layer
+    def __init__(self, no=80, anchors=(), ch=()):  # detection layer
         super(Detect, self).__init__()
-        self.training = training
         self.no = no  # number of outputs per anchor
         self.nl = len(anchors)  # number of detection layers
         self.na = len(anchors[0]) // 2  # number of anchors
+        self.stride = torch.tensor([8,16,32]).float()
         self.grid = [torch.zeros(1)] * self.nl  # init grid
         a = torch.tensor(anchors).float().view(self.nl, -1, 2)
         self.register_buffer('anchors', a)  # shape(nl,na,2)
@@ -36,18 +33,15 @@ class Detect(nn.Module):
             bs, _, ny, nx = x[i].shape  # x(bs,255,20,20) to x(bs,3,20,20,85)
             x[i] = x[i].view(bs, self.na, self.no, ny, nx).permute(0, 1, 3, 4, 2).contiguous()
 
-            if not self.training:  # inference
-                if self.grid[i].shape[2:4] != x[i].shape[2:4]:
-                    self.grid[i] = self._make_grid(nx, ny).to(x[i].device)
-                y = x[i].sigmoid()
-                y[..., 0:2] = (y[..., 0:2] * 2. - 0.5 + self.grid[i]) * self.stride[i]  # xy
-                y[..., 2:4] = (y[..., 2:4] * 2) ** 2 * self.anchor_grid[i]  # wh
-                z.append(y.view(bs, -1, self.no))
+            # inference
+            if self.grid[i].shape[2:4] != x[i].shape[2:4]:
+                self.grid[i] = self._make_grid(nx, ny).to(x[i].device)
+            y = x[i].sigmoid()
+            y[..., 0:2] = (y[..., 0:2] * 2. - 0.5 + self.grid[i]) * self.stride[i]  # xy
+            y[..., 2:4] = (y[..., 2:4] * 2) ** 2 * self.anchor_grid[i]  # wh
+            z.append(y.view(bs, -1, self.no))
 
-        if self.training:
-            out = x
-        else:
-            out = (torch.cat(z, 1), x)
+        out = (torch.cat(z, 1), x)
 
         return out
     
@@ -112,16 +106,13 @@ class MTA_F3D_MODEL(nn.Module):
         # Head
         self.head_bbox = Detect(no = 4+1,
                                 anchors = cfg.MODEL.ANCHORS,
-                                ch = [BiFPN_fsize]*len(cfg.MODEL.ANCHORS),
-                                training = False)
+                                ch = [BiFPN_fsize]*len(cfg.MODEL.ANCHORS))
         self.head_clo = Detect(no = cfg.nc,
                                 anchors = cfg.MODEL.ANCHORS,
-                                ch = [BiFPN_fsize]*len(cfg.MODEL.ANCHORS),
-                                training = False)
+                                ch = [BiFPN_fsize]*len(cfg.MODEL.ANCHORS))
         self.head_act = Detect(no = cfg.MODEL.NUM_CLASSES,
                                 anchors = cfg.MODEL.ANCHORS,
-                                ch = [256,512,1024],
-                                training = False)
+                                ch = [256,512,1024])
         
     def forward(self, x):
         
@@ -160,6 +151,16 @@ class MTA_F3D_MODEL(nn.Module):
         
         return out_bboxs, out_clos, out_acts
 
+    def _initialize_biases(self, m, cf=None):  # initialize biases into Detect(), cf is class frequency
+        # https://arxiv.org/abs/1708.02002 section 3.3
+        # cf = torch.bincount(torch.tensor(np.concatenate(dataset.labels, 0)[:, 0]).long(), minlength=nc) + 1.
+        # m = Detect() module
+        for mi, s in zip(m.m, m.stride):  # from
+            b = mi.bias.view(m.na, -1)  # conv.bias(255) to (3,85)
+            b.data[:, 4] += math.log(8 / (640 / s) ** 2)  # obj (8 objects per 640 image)
+            b.data[:, 5:] += math.log(0.6 / (m.nc - 0.99)) if cf is None else torch.log(cf / cf.sum())  # cls
+            mi.bias = torch.nn.Parameter(b.view(-1), requires_grad=True)
+
 if __name__ == '__main__':
     
     with open('cfg/deepfashion2.yaml', 'r') as f:
@@ -188,11 +189,11 @@ if __name__ == '__main__':
     model = MTA_F3D_MODEL(cfg = opt ).cuda()
     out_bboxs, out_clos, out_acts = model(v)
     print('bbox shape info')
-    for i in out_bboxs:
-        print(i.shape)
+    for i, j in zip(out_bboxs[0], out_bboxs[1]):
+        print(i.shape, j.shape)
     print('clo shape info')
-    for i in out_clos:
+    for i in out_clos[0]:
         print(i.shape)
     print('act shape info')
-    for i in out_acts:
+    for i in out_acts[0]:
         print(i.shape)
