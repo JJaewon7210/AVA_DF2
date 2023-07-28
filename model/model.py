@@ -113,15 +113,15 @@ class MTA_F3D_MODEL(nn.Module):
         self.head_bbox = Detect(no = 4+1,
                                 anchors = cfg.MODEL.ANCHORS,
                                 ch = [BiFPN_fsize]*len(cfg.MODEL.ANCHORS),
-                                training = True)
+                                training = False)
         self.head_clo = Detect(no = cfg.nc,
                                 anchors = cfg.MODEL.ANCHORS,
                                 ch = [BiFPN_fsize]*len(cfg.MODEL.ANCHORS),
-                                training = True)
+                                training = False)
         self.head_act = Detect(no = cfg.MODEL.NUM_CLASSES,
                                 anchors = cfg.MODEL.ANCHORS,
                                 ch = [256,512,1024],
-                                training = True)
+                                training = False)
         
     def forward(self, x):
         

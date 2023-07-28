@@ -28,8 +28,6 @@ names: [
 
 # opt parameter (from main.py in yolov7 project)
 weights: ''  # initial weights path
-cfg: ''  # model.yaml path
-data: cfg/deepfashion2.yaml  # data.yaml path
 epochs: 12  # number of epochs
 batch_size: 8  # total batch size for all GPUs
 batch_size_test: 1
@@ -49,7 +47,7 @@ local_rank: -1  # DDP parameter, do not modify
 workers: 8  # maximum number of dataloader workers
 project: runs/train  # save to project/name
 entity: null  # W&B entity
-name: deepfashion_test  # save to project/name
+name: AVA_DF2  # save to project/name
 exist_ok: false  # existing project/name ok, do not increment
 linear_lr: false  # linear LR
 label_smoothing: 0.0  # Label smoothing epsilon

@@ -67,6 +67,7 @@ def main(hyp, opt, device, tb_writer):
     opt.hyp = hyp  # add hyperparameters
     run_id = torch.load(weights, map_location=device).get('wandb_id') if weights.endswith('.pt') and os.path.isfile(weights) else None
     wandb_logger = WandbLogger(opt, Path(opt.save_dir).stem, run_id, opt_dict)
+    opt_dict = wandb_logger.data_dict
     if wandb_logger.wandb:
         weights, epochs, hyp = opt.weights, opt.epochs, opt.hyp  # WandbLogger might update weights, epochs if resuming
 
@@ -76,7 +77,7 @@ def main(hyp, opt, device, tb_writer):
     if pretrained:
         ckpt = torch.load(weights, map_location=device)  # load checkpoint
         model = Model(cfg=opt).to(device)  #TODO: Define the model
-        exclude = ['anchor'] if (opt.cfg or hyp.get('anchors')) and not opt.resume else []  # exclude keys
+        exclude = ['anchor'] if (hyp.get('anchors')) and not opt.resume else []  # exclude keys
         state_dict = ckpt['model'].float().state_dict()  # to FP32
         state_dict = intersect_dicts(state_dict, model.state_dict(), exclude=exclude)  # intersect
         model.load_state_dict(state_dict, strict=False)  # load
@@ -193,43 +194,38 @@ def main(hyp, opt, device, tb_writer):
             with amp.autocast(enabled=cuda):
                 out_bboxs, out_clos, out_acts = model(model_input)
                 
-                out_bbox = out_bboxs[-1] 
-                out_clo = out_clos[-1] 
-                out_act = out_acts[-1] 
-                
-                print(out_bbox.shape)# [Batch, 3, 7, 7, 5]
-                print(out_clo.shape)# [Batch, 3, 7, 7, 13]
-                print(out_act.shape)# [Batch, 3, 7, 7, 80]
+                print(len(out_bboxs))
+            
                 
                 
                 
-                total_loss, loss_items = compute_loss(preds, targets) #TODO: Define the loss function
+                # total_loss, loss_items = compute_loss(preds, targets) #TODO: Define the loss function
 
 
             # Batch-03. Backward
-            scaler.scale(total_loss).backward()
+            scaler.scale(torch.Tensor([0.1])).backward()
             scaler.step(optimizer)  # optimizer.step
             scaler.update()
             optimizer.zero_grad()
             
 
-            # Batch-04. Print
-            mloss = (mloss * i + loss_items) / (i + 1)  # update mean losses
-            mtotal_loss = (mtotal_loss * i + total_loss) / (i+1) # update mean total_loss
-            gpu_memory_usage_gb = '%.3gG' % (torch.cuda.memory_reserved() / 1E9 if torch.cuda.is_available() else 0)
-            output_string = '%g/%g' % (epoch, epochs - 1)  # Display current epoch / total epochs
-            output_string += ' ' + gpu_memory_usage_gb
-            for loss_idx in range(len(mloss)):
-                output_string += ' ' + '%10.4g' % mloss[loss_idx]
-            output_string += ' ' + '%10.4g' % mtotal_loss
-            pbar.set_description(output_string)
+            # # Batch-04. Print
+            # mloss = (mloss * i + loss_items) / (i + 1)  # update mean losses
+            # mtotal_loss = (mtotal_loss * i + total_loss) / (i+1) # update mean total_loss
+            # gpu_memory_usage_gb = '%.3gG' % (torch.cuda.memory_reserved() / 1E9 if torch.cuda.is_available() else 0)
+            # output_string = '%g/%g' % (epoch, epochs - 1)  # Display current epoch / total epochs
+            # output_string += ' ' + gpu_memory_usage_gb
+            # for loss_idx in range(len(mloss)):
+            #     output_string += ' ' + '%10.4g' % mloss[loss_idx]
+            # output_string += ' ' + '%10.4g' % mtotal_loss
+            # pbar.set_description(output_string)
             
-            cur_step = epoch * num_batch + i
-            if (cur_step % opt.log_step == 0) and (cur_step > opt.log_step - 1):
-                tags = ['train/box_loss', 'train/obj_loss', 'train/cls(cloth)_loss', 'train/cls(action)_loss', 'lr']
-                lr = [x['lr'] for x in optimizer.param_groups]
-                for x, tag in zip(list(mloss[:-1]) + lr, tags):
-                    wandb_logger.log({tag: x})
+            # cur_step = epoch * num_batch + i
+            # if (cur_step % opt.log_step == 0) and (cur_step > opt.log_step - 1):
+            #     tags = ['train/box_loss', 'train/obj_loss', 'train/cls(cloth)_loss', 'train/cls(action)_loss', 'lr']
+            #     lr = [x['lr'] for x in optimizer.param_groups]
+            #     for x, tag in zip(list(mloss[:-1]) + lr, tags):
+            #         wandb_logger.log({tag: x})
                     
             # Batch-05. Plot
             if plots and i < 10:
@@ -325,17 +321,11 @@ if __name__ == '__main__':
         apriori = opt.global_rank, opt.local_rank
         with open(Path(ckpt).parent.parent / 'opt.yaml') as f:
             opt = argparse.Namespace(**yaml.load(f, Loader=yaml.SafeLoader))  # replace
-        opt.cfg, opt.weights, opt.resume, opt.batch_size, opt.global_rank, opt.local_rank = '', ckpt, True, opt.total_batch_size, *apriori  # reinstate
+        opt.weights, opt.resume, opt.batch_size, opt.global_rank, opt.local_rank = ckpt, True, opt.total_batch_size, *apriori  # reinstate
         logger.info('Resuming training from %s' % ckpt)
     else:
         # opt.hyp = opt.hyp or ('hyp.finetune.yaml' if opt.weights else 'hyp.scratch.yaml')
-        opt.data, opt.cfg = check_file(opt.data), check_file(opt.cfg)  # check files
         opt.img_size.extend([opt.img_size[-1]] * (2 - len(opt.img_size)))  # extend to 2 sizes (train, test)
         opt.save_dir = increment_path(Path(opt.project) / opt.name, exist_ok=opt.exist_ok)  # increment run
     
-    # TensorBoard-Writer
-    prefix = colorstr('tensorboard: ')
-    logger.info(f"{prefix}Start with 'tensorboard --logdir {opt.project}', view at http://localhost:6006/")
-    tb_writer = None # tb_writer = SummaryWriter 에러 떠서 지움
-    
-    main(hyp, opt, device = torch.device('cuda:0'), tb_writer = tb_writer)
+    main(hyp, opt, device = torch.device('cuda:0'), tb_writer = None)

@@ -36,7 +36,7 @@ class CombinedDataset(Dataset):
         return item1, item2
     
     def print_summary(self):
-        ratio = len(self.datasetDF2) / len(self.datasetAVA)
+        ratio = len(self.datasetAVA) / len(self.datasetDF2)
         logger.info(f"\n====> Loading Combined dataset")
         logger.info(f"Name of dataset1: {type(self.datasetDF2).__name__}")
         logger.info(f"Name of dataset2: {type(self.datasetAVA).__name__}")
