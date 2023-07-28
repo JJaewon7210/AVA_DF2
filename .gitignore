@@ -25,6 +25,7 @@
 
 storage.googleapis.com
 inference/*
+weights/*
 runs/*
 data/*
 data/images/*
