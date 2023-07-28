@@ -27,21 +27,6 @@ pd.options.display.max_columns = 10
 cv2.setNumThreads(0)  # prevent OpenCV from multithreading (incompatible with PyTorch DataLoader)
 os.environ['NUMEXPR_MAX_THREADS'] = str(min(os.cpu_count(), 8))  # NumExpr max threads
 
-def data2device(data, device='cuda:0'):
-    if isinstance(data, (torch.Tensor, np.ndarray)):
-        if torch.is_tensor(data) and not data.device.type == device:
-            return data.to(device)
-        elif isinstance(data, np.ndarray):
-            return torch.from_numpy(data).to(device)
-    elif isinstance(data, tuple):
-        return tuple(data2device(item, device) for item in data)
-    elif isinstance(data, list):
-        return list(data2device(item, device) for item in data)
-
-    # For any other data types, return them unchanged
-    return data
-
-
 class ConfigObject:
     def __init__(self, config_dict):
         for key, value in config_dict.items():
