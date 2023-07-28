@@ -27,7 +27,7 @@ names: [
   ]
 
 # opt parameter (from main.py in yolov7 project)
-weights: weights/yolov7.pt  # initial weights path
+weights: ''  # initial weights path
 cfg: ''  # model.yaml path
 data: cfg/deepfashion2.yaml  # data.yaml path
 epochs: 12  # number of epochs

@@ -1,8 +1,11 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-
 from torch.autograd import Variable
+import warnings
+
+# Suppress all UserWarning messages
+warnings.filterwarnings("ignore", category=UserWarning)
 
 class DepthwiseConvBlock(nn.Module):
     """

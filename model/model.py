@@ -182,8 +182,17 @@ if __name__ == '__main__':
     opt.merge(opt_ava)
     opt.merge(opt_model)
         
-    v = np.random.uniform(low=0.0, high=1.0, size= (4,3,16,224,224))
+    v = np.random.uniform(low=0.0, high=1.0, size= (opt.batch_size,3, opt.DATA.NUM_FRAMES, opt.img_size[0], opt.img_size[0]))
     v = torch.Tensor(v).cuda()
     
     model = MTA_F3D_MODEL(cfg = opt ).cuda()
-    output = model(v)
+    out_bboxs, out_clos, out_acts = model(v)
+    print('bbox shape info')
+    for i in out_bboxs:
+        print(i.shape)
+    print('clo shape info')
+    for i in out_clos:
+        print(i.shape)
+    print('act shape info')
+    for i in out_acts:
+        print(i.shape)

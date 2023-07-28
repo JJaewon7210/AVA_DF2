@@ -16,10 +16,10 @@ import torch
 import numpy as np
 from torch.cuda import amp
 import torch.optim as optim
-from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 
 # Local application/library specific imports
+from model.model import MTA_F3D_MODEL as Model
 from utils.general import labels_to_class_weights, increment_path, init_seeds, \
     fitness, strip_optimizer, get_latest_run, check_dataset, check_file, check_git_status, check_img_size, \
     check_requirements, print_mutation, set_logging, colorstr, ConfigObject, data2device
@@ -57,7 +57,7 @@ def main(hyp, opt, device, tb_writer):
 
 
     # 3. Configure
-    plots = not opt.evolve  # create plots
+    plots = True
     cuda = device.type != 'cpu'
     init_seeds(1)
     opt_dict = opt.to_dict()  # data dict
@@ -67,7 +67,6 @@ def main(hyp, opt, device, tb_writer):
     opt.hyp = hyp  # add hyperparameters
     run_id = torch.load(weights, map_location=device).get('wandb_id') if weights.endswith('.pt') and os.path.isfile(weights) else None
     wandb_logger = WandbLogger(opt, Path(opt.save_dir).stem, run_id, opt_dict)
-    opt_dict = wandb_logger.opt_dict
     if wandb_logger.wandb:
         weights, epochs, hyp = opt.weights, opt.epochs, opt.hyp  # WandbLogger might update weights, epochs if resuming
 
@@ -76,14 +75,14 @@ def main(hyp, opt, device, tb_writer):
     pretrained = weights.endswith('.pt')
     if pretrained:
         ckpt = torch.load(weights, map_location=device)  # load checkpoint
-        model = Model(opt.cfg or ckpt['model'].yaml, ch=3, nc=nc, anchors=hyp.get('anchors')).to(device)  #TODO: Define the model
+        model = Model(cfg=opt).to(device)  #TODO: Define the model
         exclude = ['anchor'] if (opt.cfg or hyp.get('anchors')) and not opt.resume else []  # exclude keys
         state_dict = ckpt['model'].float().state_dict()  # to FP32
         state_dict = intersect_dicts(state_dict, model.state_dict(), exclude=exclude)  # intersect
         model.load_state_dict(state_dict, strict=False)  # load
         logger.info('Transferred %g/%g items from %s' % (len(state_dict), len(model.state_dict()), weights))  # report
     else:
-        model = Model(opt.cfg, ch=3, nc=nc, anchors=hyp.get('anchors')).to(device) #TODO: Define the model
+        model = Model(cfg=opt).to(device) #TODO: Define the model
 
 
     # 6. Dataset, Dataloader
@@ -98,17 +97,17 @@ def main(hyp, opt, device, tb_writer):
     dataloader = loader(dataset, batch_size=opt.batch_size, num_workers=opt.workers, collate_fn=CombinedDataset.collate_fn)
     num_batch = len(dataloader)  # number of batches
     
-    testset_df2 = DeepFasion2WithPseudoLabel(path=opt.val, img_size=imgsz_test, batch_size=opt.batch_size_test, 
-                                            augment=False, hyp=opt.hyp, rect=False, image_weights=opt.image_weights,
-                                            cache_images=opt.cache_images, single_cls=opt.single_cls, 
-                                            stride=32, pad=0.0, prefix='val: ')
-    testset_ava = AvaWithPseudoLabel(cfg=opt, split='val', only_detection=False)
-    testset = CombinedDataset(testset_df2, testset_ava)
-    loader = torch.utils.data.DataLoader if opt.image_weights else InfiniteDataLoader
-    testloader = loader(testset, batch_size=opt.batch_size_test, num_workers=opt.workers, collate_fn=CombinedDataset.collate_fn)
+    # testset_df2 = DeepFasion2WithPseudoLabel(path=opt.val, img_size=imgsz_test, batch_size=opt.batch_size_test, 
+    #                                         augment=False, hyp=opt.hyp, rect=False, image_weights=opt.image_weights,
+    #                                         cache_images=opt.cache_images, single_cls=opt.single_cls, 
+    #                                         stride=32, pad=0.0, prefix='val: ')
+    # testset_ava = AvaWithPseudoLabel(cfg=opt, split='val', only_detection=False)
+    # testset = CombinedDataset(testset_df2, testset_ava)
+    # loader = torch.utils.data.DataLoader if opt.image_weights else InfiniteDataLoader
+    # testloader = loader(testset, batch_size=opt.batch_size_test, num_workers=opt.workers, collate_fn=CombinedDataset.collate_fn)
     
     # 7. Optimizer, LR scheduler 
-    optimizer = optim.Adam(model.parameters(), lr=hyp['lr0'], momentum=hyp['momentum'], weight_decay=hyp['weight_decay'] )
+    optimizer = optim.Adam(model.parameters(), lr=hyp['lr0'], weight_decay=hyp['weight_decay'] )
     scheduler = CosineAnnealingWarmupRestarts(optimizer=optimizer, 
                                               max_lr=hyp['lrmax'],
                                               min_lr=hyp['lr0'],
@@ -192,7 +191,18 @@ def main(hyp, opt, device, tb_writer):
             
             # Batch-02. Forward
             with amp.autocast(enabled=cuda):
-                pred = model(model_input)
+                out_bboxs, out_clos, out_acts = model(model_input)
+                
+                out_bbox = out_bboxs[-1] 
+                out_clo = out_clos[-1] 
+                out_act = out_acts[-1] 
+                
+                print(out_bbox.shape)# [Batch, 3, 7, 7, 5]
+                print(out_clo.shape)# [Batch, 3, 7, 7, 13]
+                print(out_act.shape)# [Batch, 3, 7, 7, 80]
+                
+                
+                
                 total_loss, loss_items = compute_loss(preds, targets) #TODO: Define the loss function
 
 
@@ -320,13 +330,12 @@ if __name__ == '__main__':
     else:
         # opt.hyp = opt.hyp or ('hyp.finetune.yaml' if opt.weights else 'hyp.scratch.yaml')
         opt.data, opt.cfg = check_file(opt.data), check_file(opt.cfg)  # check files
-        assert len(opt.cfg) or len(opt.weights), 'either --cfg or --weights must be specified'
         opt.img_size.extend([opt.img_size[-1]] * (2 - len(opt.img_size)))  # extend to 2 sizes (train, test)
         opt.save_dir = increment_path(Path(opt.project) / opt.name, exist_ok=opt.exist_ok)  # increment run
     
     # TensorBoard-Writer
     prefix = colorstr('tensorboard: ')
     logger.info(f"{prefix}Start with 'tensorboard --logdir {opt.project}', view at http://localhost:6006/")
-    tb_writer = SummaryWriter(opt.save_dir)  # Tensorboard
-
+    tb_writer = None # tb_writer = SummaryWriter 에러 떠서 지움
+    
     main(hyp, opt, device = torch.device('cuda:0'), tb_writer = tb_writer)
