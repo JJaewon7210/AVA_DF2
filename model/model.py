@@ -149,6 +149,29 @@ class MTA_F3D_MODEL(nn.Module):
         out_clos = self.head_clo([x_2d_p3, x_2d_p4, x_2d_p5])
         out_acts = self.head_act([x_p3, x_p4, x_p5])
         
+        '''
+        out_bboxs
+        - out_bboxs[0]: inference, shape of [3087, 5]
+        - out_bboxs[1]: features
+            - out_bboxs[1][0] has the shape of [B, na, 28, 28, 5]
+            - out_bboxs[1][1] has the shape of [B, na, 14, 14, 5]
+            - out_bboxs[1][2] has the shape of [B, na, 7, 7, 5]
+            
+        out_clos
+        - out_clos[0]: inference, shape of [3087, 13]
+        - out_clos[1]: features
+            - out_clos[1][0] has the shape of [B, na, 28, 28, 13]
+            - out_clos[1][1] has the shape of [B, na, 14, 14, 13]
+            - out_clos[1][2] has the shape of [B, na, 7, 7, 13]
+            
+        out_acts
+        - out_acts[0]: inference, shape of [3087, 80]
+        - out_acts[1]: features
+            - out_acts[1][0] has the shape of [B, na, 28, 28, 80]
+            - out_acts[1][1] has the shape of [B, na, 14, 14, 80]
+            - out_acts[1][2] has the shape of [B, na, 7, 7, 80]
+        '''
+        
         return out_bboxs, out_clos, out_acts
 
     def _initialize_biases(self, m, cf=None):  # initialize biases into Detect(), cf is class frequency

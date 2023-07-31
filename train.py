@@ -29,6 +29,7 @@ from utils.scheduler import CosineAnnealingWarmupRestarts
 from utils.torch_utils import ModelEMA, select_device, intersect_dicts, torch_distributed_zero_first, is_parallel
 from utils.plots import plot_images, plot_labels, plot_results, plot_evolution
 from utils.loss import CustomLoss_
+from utils.loss_ava import RegionLoss_Ava
 from datasets.ava_dataset import AvaWithPseudoLabel
 from datasets.yolo_datasets import DeepFasion2WithPseudoLabel, InfiniteDataLoader
 from datasets.combined_dataset import CombinedDataset
@@ -147,15 +148,16 @@ def main(hyp, opt, device, tb_writer):
     logger.info(f'Using {dataloader.num_workers} dataloader workers\n'
                 f'Logging results to {save_dir}\n'
                 f'Starting training for {epochs} epochs...')
+    DF2_L = CustomLoss_()
+    AVA_L = RegionLoss_Ava(cfg = opt)
     
-
     # Start epoch ------------------------------------------------------------------------------------------------------
     for epoch in range(start_epoch, epochs):  
         model.train()
         optimizer.zero_grad()
         pbar = enumerate(dataloader)
         pbar = tqdm(pbar, total=num_batch)  # progress bar
-        mloss = torch.zeros(4, device=device)  # mean losses
+        mloss = torch.zeros(3, device=device)  # mean losses
         mtotal_loss = torch.zeros(1, device=device) # mean total_loss (sum of losses)
         
         # Start batch ----------------------------------------------------------------------------------------------------
@@ -175,19 +177,6 @@ def main(hyp, opt, device, tb_writer):
             '''
             
             clips, cls, boxes, feature_s, feature_m, feature_l = item2
-            
-            # Move the first frame (T=0) of the first clip (B=0) to CPU for visualization
-            first_frame = clips[0, :, 0, :, :].cpu()
-
-            # Convert the tensor to a NumPy array and bring the values back to the range [0, 255]
-            first_frame_np = (first_frame * 255).byte().numpy()
-
-            # Display the first frame using matplotlib
-            plt.imshow(first_frame_np.transpose(1, 2, 0))
-            plt.axis('off')
-            plt.savefig("first_frame.png")
-            plt.close()
-            
             clips = clips.to(device, non_blocking=True) # TODO: 노멀라이즈가 되어있음
             '''
              Explanation of variables in item2_batch:
@@ -210,9 +199,26 @@ def main(hyp, opt, device, tb_writer):
                 
                 out_bbox_infer, out_bbox_features = out_bboxs[0], out_bboxs[1]
                 out_clo_infer, out_clo_features = out_clos[0], out_clos[1]
-                out_act_infer, out_act_features = out_acts[0], out_clos[1]
+                out_act_infer, out_act_features = out_acts[0], out_acts[1]
 
                 # total_loss, loss_items = compute_loss(preds, targets) #TODO: Define the loss function
+                out_AVA_00 = torch.cat((out_bbox_features[0][-batch_size:], out_act_features[0][-batch_size:]), dim=4)
+                out_AVA_01 = torch.cat((out_bbox_features[1][-batch_size:], out_act_features[1][-batch_size:]), dim=4)
+                out_AVA_02 = torch.cat((out_bbox_features[2][-batch_size:], out_act_features[2][-batch_size:]), dim=4)
+                out_AVA_00 = out_AVA_00.view(batch_size, 3 * 85, 28, 28)
+                out_AVA_01 = out_AVA_01.view(batch_size, 3 * 85, 14, 14)
+                out_AVA_02 = out_AVA_02.view(batch_size, 3 * 85, 7, 7)
+                target = {}
+                target['cls'] = torch.Tensor(cls)
+                target['boxes'] = torch.Tensor(boxes)
+                lossAVA_00, lossitemAVA_00 = AVA_L.forward(out_AVA_00, target)
+                lossAVA_01, lossitemAVA_01 = AVA_L.forward(out_AVA_01, target)
+                lossAVA_02, lossitemAVA_02 = AVA_L.forward(out_AVA_02, target)
+                total_loss = lossAVA_00 + lossAVA_01 + lossAVA_02
+                lossBboxAVA = lossitemAVA_00[0] + lossitemAVA_01[0] + lossitemAVA_02[0]
+                lossObjAVA = lossitemAVA_00[1] + lossitemAVA_01[1] + lossitemAVA_02[1]
+                lossClsAVA = lossitemAVA_00[2] + lossitemAVA_01[2] + lossitemAVA_02[2]
+                
                 
             # Batch-03. Backward
             scaler.scale(total_loss).backward()
@@ -221,8 +227,12 @@ def main(hyp, opt, device, tb_writer):
             optimizer.zero_grad()
 
             # Batch-04. Print
-            mloss = (mloss * i + loss_items) / (i + 1)  # update mean losses
-            mtotal_loss = (mtotal_loss * i + total_loss) / (i+1) # update mean total_loss
+            loss_item = torch.tensor([lossBboxAVA, lossObjAVA, lossClsAVA],device=device)
+            
+            if torch.all(torch.isfinite(loss_item)):
+                mloss = (mloss * i + loss_item) / (i + 1)  # update mean losses
+                mtotal_loss = (mtotal_loss * i + total_loss) / (i+1) # update mean total_loss
+                
             gpu_memory_usage_gb = '%.3gG' % (torch.cuda.memory_reserved() / 1E9 if torch.cuda.is_available() else 0)
             output_string = '%g/%g' % (epoch, epochs - 1)  # Display current epoch / total epochs
             output_string += ' ' + gpu_memory_usage_gb
@@ -233,7 +243,7 @@ def main(hyp, opt, device, tb_writer):
             
             cur_step = epoch * num_batch + i
             if (cur_step % opt.log_step == 0) and (cur_step > opt.log_step - 1):
-                tags = ['train/box_loss', 'train/obj_loss', 'train/cls(cloth)_loss', 'train/cls(action)_loss', 'lr']
+                tags = ['train/box_loss', 'train/obj_loss', 'train/cls(action)_loss', 'lr']
                 lr = [x['lr'] for x in optimizer.param_groups]
                 for x, tag in zip(list(mloss[:-1]) + lr, tags):
                     wandb_logger.log({tag: x})
@@ -266,7 +276,7 @@ def main(hyp, opt, device, tb_writer):
     wandb_logger.current_epoch = epoch + 1
 
     # Log
-    tags = ['epoch_train/box_loss', 'epoch_train/obj_loss', 'epoch_train/cls(cloth)_loss', 'epoch_train/cls(action)_loss']
+    tags = ['epoch_train/box_loss', 'epoch_train/obj_loss', 'epoch_train/cls(action)_loss']
     for x, tag in zip(list(mloss[:-1]), tags):
         if tb_writer:
             tb_writer.add_scalar(tag, x, epoch)  # tensorboard

@@ -440,7 +440,6 @@ class AvaWithPseudoLabel(Ava):
         ret['feature_s'] = feature_s
         ret['feature_m'] = feature_m
         ret['feature_l'] = feature_l
-        print(keyframe_info)
         
         return ret
         
