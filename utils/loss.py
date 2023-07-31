@@ -7,7 +7,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from utils.general import bbox_iou, bbox_alpha_iou, box_iou, box_giou, box_diou, box_ciou, xywh2xyxy
+from utils.general import bbox_iou, bbox_alpha_iou, box_iou, box_giou, box_diou, box_ciou, xywh2xyxy, box_iou_only_box1
 
 class WeightedMultiTaskLoss(nn.Module):
     def __init__(self, num_tasks):
@@ -31,7 +31,7 @@ class WeightedMultiTaskLoss(nn.Module):
 
     
 
-class CustomLoss_(nn.Module):
+class CustomLoss_:
     def __init__(self):
         super(CustomLoss_, self).__init__()
         
@@ -61,21 +61,21 @@ class CustomLoss_(nn.Module):
                     'iou_t': 0.2, 'anchor_t': 40.0}
         
         self.BCEcls = nn.BCEWithLogitsLoss(pos_weight=torch.tensor([self.hyp['cls_pw']], device='cpu'))
-
-    def forward(self, prediction, targets):
-        return
     
-    def loss_class_cloth(self, prediction, targets):
+    def loss_class_cloth(self, prediction, targets, pseudo_label):
         """
         This function calculates the binary cross-entropy loss for object classification in the context of object detection.
 
         Parameters:
         - prediction: A list of tensors. 
             Each tensor represents the prediction for a different scale, 
-            and has shape [batch size, number of anchors, grid size, grid size, 5 + number of classes].
+            and has shape [batch size, number of anchors, grid size, grid size, number of classes].
         - target: A list of tensors. 
             Each tensor contains the targets for a different scale, 
             with the same dimensions as the corresponding prediction tensor.
+        - pseudo_label: A list of tensors.
+            Each tensor represents the bbox localization for a different scale,
+            and has shape [batch size, number of anchors, grid size, grid size, 4+1]
 
         Returns:
         - loss_cls: A scalar tensor representing the binary cross-entropy loss for the object classification task.
@@ -85,7 +85,7 @@ class CustomLoss_(nn.Module):
         """
         device = targets.device
         loss_cls = torch.zeros(1, device=device)
-        bs, as_, gjs, gis, targets, anchors = self.build_targets(prediction, targets, img_shape=224)
+        bs, as_, gjs, gis, targets, anchors = self.build_targets(pseudo_label, targets, img_shape=224)
     
         # Losses
         for i, pi in enumerate(prediction):  # layer index, layer predictions
@@ -98,13 +98,13 @@ class CustomLoss_(nn.Module):
                 # Classification
                 selected_tcls = targets[i][:, 1].long()
                 if self.nc > 1:  # cls loss (only if multiple classes)
-                    t = torch.full_like(ps[:, 5:], self.cn, device=device)  # targets
+                    t = torch.full_like(ps, self.cn, device=device)  # targets
                     t[range(n), selected_tcls] = self.cp
-                    loss_cls += self.BCEcls(ps[:, 5:], t)  # BCE
+                    loss_cls += self.BCEcls(ps, t)  # BCE
                     
         return loss_cls
     
-    
+       
     def loss_feature_distance(self, prediction, target):
         """
         This function calculates the Mean Squared Error (MSE) loss between predicted and target features for BBox localization.
@@ -277,7 +277,7 @@ class CustomLoss_(nn.Module):
                 
                 fg_pred = pi[b, a, gj, gi]                
                 p_obj.append(fg_pred[:, 4:5]) # 4+1+13+80 channel = 4 (xywh) + 1 (confidence score) + 13 (number of cloth classes) 
-                p_cls.append(fg_pred[:, 5:5+self.nc])
+                # p_cls.append(fg_pred[:, 5:5+self.nc])
                 
                 grid = torch.stack([gi, gj], dim=1)
                 pxy = (fg_pred[:, :2].sigmoid() * 2. - 0.5 + grid) * self.stride[i] #/ 8.
@@ -290,7 +290,7 @@ class CustomLoss_(nn.Module):
             if pxyxys.shape[0] == 0:
                 continue
             p_obj = torch.cat(p_obj, dim=0)
-            p_cls = torch.cat(p_cls, dim=0)
+            # p_cls = torch.cat(p_cls, dim=0)
             from_which_layer = torch.cat(from_which_layer, dim=0)
             all_b = torch.cat(all_b, dim=0)
             all_a = torch.cat(all_a, dim=0)
@@ -298,41 +298,43 @@ class CustomLoss_(nn.Module):
             all_gi = torch.cat(all_gi, dim=0)
             all_anch = torch.cat(all_anch, dim=0)
         
-            pair_wise_iou = box_iou(txyxy, pxyxys) # txyxy [2, 4] x pxyxys [32, 4] = pair_wise_iou [2, 32]
+            pair_wise_iou = box_iou_only_box1(txyxy, pxyxys, standard='box1') # txyxy [2, 4] x pxyxys [32, 4] = pair_wise_iou [2, 32]
 
             pair_wise_iou_loss = -torch.log(pair_wise_iou + 1e-8)
 
-            top_k, _ = torch.topk(pair_wise_iou, min(10, pair_wise_iou.shape[1]), dim=1) # [2, 32] -> [2, 10]
-            dynamic_ks = torch.clamp(top_k.sum(1).int(), min=1) # [2, 10] -> [2]
+            # top_k, _ = torch.topk(pair_wise_iou, min(10, pair_wise_iou.shape[1]), dim=1) # [2, 32] -> [2, 10]
+            # dynamic_ks = torch.clamp(top_k.sum(1).int(), min=1) # [2, 10] -> [2]
+            top_k, _ = torch.topk(pair_wise_iou, min(20, pair_wise_iou.shape[1]), dim=1) # [2, 32] -> [2, 15]
+            dynamic_ks = torch.clamp(top_k.sum(1).int(), min=10) # [2, 10] -> [2]
 
-            gt_cls_per_image = (
-                F.one_hot(this_target[:, 1].to(torch.int64), self.nc)
-                .float()
-                .unsqueeze(1)
-                .repeat(1, pxyxys.shape[0], 1)
-            )
-            gt_cls_per_image = (
-                this_target[:, 5:5+self.nc].to(torch.int64)
-                .float()
-                .unsqueeze(1)
-                .repeat(1, pxyxys.shape[0], 1)
-            )
+            # gt_cls_per_image = (
+            #     F.one_hot(this_target[:, 1].to(torch.int64), self.nc)
+            #     .float()
+            #     .unsqueeze(1)
+            #     .repeat(1, pxyxys.shape[0], 1)
+            # )
+            # gt_cls_per_image = (
+            #     this_target[:, 5:5+self.nc].to(torch.int64)
+            #     .float()
+            #     .unsqueeze(1)
+            #     .repeat(1, pxyxys.shape[0], 1)
+            # )
 
             num_gt = this_target.shape[0]
-            cls_preds_ = (
-                p_cls.float().unsqueeze(0).repeat(num_gt, 1, 1).sigmoid_()
-                * p_obj.unsqueeze(0).repeat(num_gt, 1, 1).sigmoid_()
-            )
+            # cls_preds_ = (
+            #     p_cls.float().unsqueeze(0).repeat(num_gt, 1, 1).sigmoid_()
+            #     * p_obj.unsqueeze(0).repeat(num_gt, 1, 1).sigmoid_()
+            # )
 
-            y = cls_preds_.sqrt_()
-            pair_wise_cls_loss = F.binary_cross_entropy_with_logits(
-               torch.log(y/(1-y)) , gt_cls_per_image, reduction="none"
-            ).sum(-1)
-            del cls_preds_
+            # y = cls_preds_.sqrt_()
+            # pair_wise_cls_loss = F.binary_cross_entropy_with_logits(
+            #    torch.log(y/(1-y)) , gt_cls_per_image, reduction="none"
+            # ).sum(-1)
+            # del cls_preds_
         
             cost = (
-                pair_wise_cls_loss
-                + 3.0 * pair_wise_iou_loss
+                # pair_wise_cls_loss +
+                3.0 * pair_wise_iou_loss
             )
 
             matching_matrix = torch.zeros_like(cost, device=device) # [2, 32]
@@ -344,11 +346,11 @@ class CustomLoss_(nn.Module):
                 matching_matrix[gt_idx][pos_idx] = 1.0
 
             del top_k, dynamic_ks
-            anchor_matching_gt = matching_matrix.sum(0)
-            if (anchor_matching_gt > 1).sum() > 0:
-                _, cost_argmin = torch.min(cost[:, anchor_matching_gt > 1], dim=0)
-                matching_matrix[:, anchor_matching_gt > 1] *= 0.0
-                matching_matrix[cost_argmin, anchor_matching_gt > 1] = 1.0
+            # anchor_matching_gt = matching_matrix.sum(0)
+            # if (anchor_matching_gt > 1).sum() > 0:
+            #     _, cost_argmin = torch.min(cost[:, anchor_matching_gt > 1], dim=0)
+            #     matching_matrix[:, anchor_matching_gt > 1] *= 0.0
+            #     matching_matrix[cost_argmin, anchor_matching_gt > 1] = 1.0
             fg_mask_inboxes = (matching_matrix.sum(0) > 0.0).to(device)
             matched_gt_inds = matching_matrix[:, fg_mask_inboxes].argmax(0)
         
@@ -439,6 +441,7 @@ class CustomLoss_(nn.Module):
         g = 0.5
         off = torch.tensor([[0, 0],
                             [1, 0], [0, 1], [-1, 0], [0, -1],
+                            [1, 1], [1, -1], [-1, 1], [-1, -1],
                             ], device=targets_6.device).float() * g
 
         for i in range(self.nl):
@@ -460,9 +463,11 @@ class CustomLoss_(nn.Module):
                 gxi = gain[[2, 3]] - gxy
                 j, k = ((gxy % 1. < g) & (gxy > 1.)).T
                 l, m = ((gxi % 1. < g) & (gxi > 1.)).T
-                j = torch.stack((torch.ones_like(j), j, k, l, m))
-                # Filtering t such that we get copies of t that correspond to the quadrants where the object's center falls into.
-                t = t.repeat((5, 1, 1))[j]
+                # j = torch.stack((torch.ones_like(j), j, k, l, m))
+                j = torch.stack([torch.ones_like(j)] * 9, dim=-1)
+                # # Filtering t such that we get copies of t that correspond to the quadrants where the object's center falls into.
+                # t = t.repeat((5, 1, 1))[j]
+                t = t.repeat((9, 1, 1))[j]
                 offsets = (torch.zeros_like(gxy)[None] + off[:, None])[j]
             else:
                 t = targets_6[0]

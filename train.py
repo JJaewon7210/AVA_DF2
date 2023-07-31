@@ -28,6 +28,7 @@ from utils.wandb_logging.wandb_utils import WandbLogger, check_wandb_resume
 from utils.scheduler import CosineAnnealingWarmupRestarts
 from utils.torch_utils import ModelEMA, select_device, intersect_dicts, torch_distributed_zero_first, is_parallel
 from utils.plots import plot_images, plot_labels, plot_results, plot_evolution
+from utils.loss import CustomLoss_
 from datasets.ava_dataset import AvaWithPseudoLabel
 from datasets.yolo_datasets import DeepFasion2WithPseudoLabel, InfiniteDataLoader
 from datasets.combined_dataset import CombinedDataset
@@ -161,7 +162,7 @@ def main(hyp, opt, device, tb_writer):
         for i, (item1, item2) in pbar:
             
             # Batch-01. Input data
-            imgs, labels, paths, _shapes, features = item1 ㅊ
+            imgs, labels, paths, _shapes, features = item1
             imgs = imgs.to(device, non_blocking=True).float() / 255.0  # uint8 to float32, 0-255 to 0.0-1.0
             '''
              Explanation of variables in item1_batch:
@@ -212,12 +213,7 @@ def main(hyp, opt, device, tb_writer):
                 out_act_infer, out_act_features = out_acts[0], out_clos[1]
 
                 # total_loss, loss_items = compute_loss(preds, targets) #TODO: Define the loss function
-                dummy_loss1 = torch.nn.functional.mse_loss(out_bbox_features[0], torch.randn(out_bbox_features[0].shape, device=device))
-                dummy_loss2 = torch.nn.functional.mse_loss(out_bbox_features[1], torch.randn(out_bbox_features[1].shape, device=device))
-                dummy_loss3 = torch.nn.functional.mse_loss(out_bbox_features[2], torch.randn(out_bbox_features[2].shape, device=device))
-                total_loss = dummy_loss1 + dummy_loss2 + dummy_loss3
-                loss_items = torch.randn(mloss.shape, device=device)
-
+                
             # Batch-03. Backward
             scaler.scale(total_loss).backward()
             scaler.step(optimizer)  # optimizer.step
