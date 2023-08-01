@@ -313,7 +313,7 @@ def main(hyp, opt, device, tb_writer):
     # End training -----------------------------------------------------------------------------------------------------
 
 if __name__ == '__main__':
-    
+
     # Import configuration files
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     with open('cfg/deepfashion2.yaml', 'r') as f:
