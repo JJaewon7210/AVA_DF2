@@ -246,15 +246,15 @@ class Ava(torch.utils.data.Dataset):
                 eigvec=np.array(self._pca_eigvec).astype(np.float32),
             )
 
-        # Normalize images by mean and std.
-        imgs = [
-            cv2_transform.color_normalization(
-                img,
-                np.array(self._data_mean, dtype=np.float32),
-                np.array(self._data_std, dtype=np.float32),
-            )
-            for img in imgs
-        ]
+        # # Normalize images by mean and std.
+        # imgs = [
+        #     cv2_transform.color_normalization(
+        #         img,
+        #         np.array(self._data_mean, dtype=np.float32),
+        #         np.array(self._data_std, dtype=np.float32),
+        #     )
+        #     for img in imgs
+        # ]
 
         # Concat list of images to single ndarray.
         imgs = np.concatenate(
