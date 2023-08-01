@@ -12,24 +12,13 @@ from utils.general import bbox_iou, bbox_alpha_iou, box_iou, box_giou, box_diou,
 class WeightedMultiTaskLoss(nn.Module):
     def __init__(self, num_tasks):
         super().__init__()
-        self.eta = nn.Parameter(torch.zeros(num_tasks, device=torch.device('cuda:0')))
+        self.params = nn.Parameter(torch.ones(num_tasks, device=torch.device('cuda:0'), requires_grad=True))
 
     def forward(self, losses):
-        '''
-        Parameters:
-            - losses (list): List of losses where each type of loss is defined as a Torch.Tensor.
-            For instance, [loss01, loss02, loss03].
-        Returns:
-            - Tuple of two items:
-                1. The original losses (torch.Tensor): The input losses without weighting.
-                2. The combined loss (torch.Tensor): The total loss that combines individual losses 
-                   using learnable loss weights.
-        '''
         losses = [loss.to(torch.device('cuda:0')) for loss in losses]
         
-        weighted_losses = torch.stack(losses) * torch.exp(-self.eta) + self.eta
-        combined_loss = weighted_losses.sum()
-        return combined_loss
+        weighted_loss = 0.5 / (self.params ** 2) * torch.stack(losses) + torch.log(1 + self.params ** 2)
+        return torch.sum(weighted_loss)
 
     
 

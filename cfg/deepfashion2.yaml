@@ -56,4 +56,4 @@ bbox_interval: 1  # Set bounding-box image logging interval for W&B
 save_period: -1  # Log model after every "save_period" epoch
 artifact_alias: latest  # version of dataset artifact to be used
 v5_metric: false  # assume maximum recall as 1.0 in AP calculation
-log_step: 100 # after every 'logging_step' record the performance to the wandb
+log_step: 1000 # after every 'logging_step' record the performance to the wandb
