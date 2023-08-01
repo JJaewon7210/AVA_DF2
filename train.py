@@ -154,6 +154,7 @@ def main(hyp, opt, device, tb_writer):
         optimizer.zero_grad()
         pbar = enumerate(dataloader)
         pbar = tqdm(pbar, total=num_batch)  # progress bar
+        logger.info(('\n' + '%10s' * 8) % ('Epoch', 'gpu_mem', 'box', 'obj', 'cls', 'total', 'lr'))
         mloss = torch.zeros(3, device=device)  # mean losses
         mtotal_loss = torch.zeros(1, device=device) # mean total_loss (sum of losses)
         

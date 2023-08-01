@@ -11,11 +11,9 @@ from datasets.yolo_datasets import LoadImagesAndLabels
 from datasets.yolo_datasets import img2label_paths
 from utils.general import colorstr, xywh2xyxy, check_dataset
 
-try:
-    import wandb
-    from wandb import init, finish
-except ImportError:
-    wandb = None
+import wandb
+from wandb import init, finish
+
 
 WANDB_ARTIFACT_PREFIX = 'wandb-artifact://'
 
