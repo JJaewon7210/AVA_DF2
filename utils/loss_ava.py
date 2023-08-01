@@ -7,7 +7,85 @@ import math
 import torch.nn as nn
 from torch.autograd import Variable
 from builtins import range as xrange
+from utils.general import box_iou, xywh2xyxy
 import numpy as np
+
+def extract_bounding_boxes(A):
+    """
+    This function extracts non-zero bounding boxes from a batched tensor or array.
+
+    Parameters:
+    A (numpy.ndarray or torch.Tensor): A 3D tensor/array of shape [Batch_size, 50, 4].
+                                       Each batch can contain up to 50 bounding boxes (x, y, w, h),
+                                       where zero bounding boxes are represented by [0, 0, 0, 0].
+
+    Returns:
+    B (numpy.ndarray or torch.Tensor): A 2D tensor/array of shape [num_boxes, 5],
+                                       where num_boxes is the total number of non-zero bounding boxes in A,
+                                       and the 5 columns represent [batch_num, x, y, w, h] for each bounding box.
+
+    Note:
+    This function assumes that all zero bounding boxes are represented by [0, 0, 0, 0].
+    """
+
+    B = []
+
+    if isinstance(A, np.ndarray):
+        for batch_num, batch in enumerate(A):
+            for bbox in batch:
+                if np.any(bbox != 0):  # if the bbox is not all zeros
+                    B.append([batch_num] + list(bbox))
+        B = np.array(B)
+
+    elif torch.is_tensor(A):
+        for batch_num in range(A.size(0)):
+            for bbox_num in range(A.size(1)):
+                if torch.any(A[batch_num, bbox_num] != 0):  # if the bbox is not all zeros
+                    B.append([batch_num] + A[batch_num, bbox_num].tolist())
+        B = torch.tensor(B, device=A.device, dtype=A.dtype)  # make sure B has the same dtype and device as A
+
+    else:
+        print("Unsupported input type.")
+
+    return B
+    
+def convert_one_hot_to_batch_class(A):
+    """
+    This function converts a one-hot encoded array or tensor to a 2D tensor/array, where the second dimension represents [batch_num, class_num].
+
+    Parameters:
+    A (numpy.ndarray or torch.Tensor): A 3D one-hot encoded array/tensor of shape [Batch_size, 50, 80].
+                                      Each batch can contain up to 50 labels, each one-hot encoded with 80 classes.
+
+    Returns:
+    B (numpy.ndarray or torch.Tensor): A 2D tensor/array of shape [num_obj, 2], where num_obj is the total number of non-zero labels in A,
+                                       and the 2 columns represent [Batch_num, class_num] for each label.
+
+    Note:
+    This function assumes that A has only one '1' per label. If a label can have multiple '1's, the function needs to be adjusted accordingly.
+    """
+    B = []
+
+    if isinstance(A, np.ndarray):
+        for batch_num, batch in enumerate(A):
+            for label_num, label in enumerate(batch):
+                if np.sum(label) != 0:  # if the label is not all zeros
+                    class_num = np.argmax(label)  # get the index of the 1 in one-hot encoded class
+                    B.append([batch_num, class_num])
+        B = np.array(B)
+
+    elif torch.is_tensor(A):
+        for batch_num in range(A.size(0)):
+            for label_num in range(A.size(1)):
+                if torch.sum(A[batch_num, label_num]) != 0:  # if the label is not all zeros
+                    class_num = torch.argmax(A[batch_num, label_num])  # get the index of the 1 in one-hot encoded class
+                    B.append([batch_num, class_num.item()])
+        B = torch.tensor(B, device=A.device, dtype=A.dtype)  # make sure B has the same dtype and device as A
+
+    else:
+        print("Unsupported input type.")
+
+    return B
 
 def bbox_ious(boxes1, boxes2, x1y1x2y2=True):
     if x1y1x2y2:
@@ -78,299 +156,414 @@ def convert2cpu(gpu_matrix):
 
 ########################### AVA ###############################
 ###############################################################
+class SigmoidBin(nn.Module):
+    stride = None  # strides computed during build
+    export = False  # onnx export
 
-class binary_FocalLoss(nn.Module):
-    def __init__(self, gamma, class_num, class_count_json, size_average=True):
-        super(binary_FocalLoss, self).__init__()
-        with open(class_count_json, 'r') as fb:
+    def __init__(self, bin_count=10, min=0.0, max=1.0, reg_scale = 2.0, use_loss_regression=True, use_fw_regression=True, BCE_weight=1.0, smooth_eps=0.0):
+        super(SigmoidBin, self).__init__()
+        
+        self.bin_count = bin_count
+        self.length = bin_count + 1
+        self.min = min
+        self.max = max
+        self.scale = float(max - min)
+        self.shift = self.scale / 2.0
+
+        self.use_loss_regression = use_loss_regression
+        self.use_fw_regression = use_fw_regression
+        self.reg_scale = reg_scale
+        self.BCE_weight = BCE_weight
+
+        start = min + (self.scale/2.0) / self.bin_count
+        end = max - (self.scale/2.0) / self.bin_count
+        step = self.scale / self.bin_count
+        self.step = step
+        #print(f" start = {start}, end = {end}, step = {step} ")
+
+        bins = torch.range(start, end + 0.0001, step).float() 
+        self.register_buffer('bins', bins) 
+               
+
+        self.cp = 1.0 - 0.5 * smooth_eps
+        self.cn = 0.5 * smooth_eps
+
+        self.BCEbins = nn.BCEWithLogitsLoss(pos_weight=torch.Tensor([BCE_weight]))
+        self.MSELoss = nn.MSELoss()
+
+    def get_length(self):
+        return self.length
+
+    def forward(self, pred):
+        assert pred.shape[-1] == self.length, 'pred.shape[-1]=%d is not equal to self.length=%d' % (pred.shape[-1], self.length)
+
+        pred_reg = (pred[..., 0] * self.reg_scale - self.reg_scale/2.0) * self.step
+        pred_bin = pred[..., 1:(1+self.bin_count)]
+
+        _, bin_idx = torch.max(pred_bin, dim=-1)
+        bin_bias = self.bins[bin_idx]
+
+        if self.use_fw_regression:
+            result = pred_reg + bin_bias
+        else:
+            result = bin_bias
+        result = result.clamp(min=self.min, max=self.max)
+
+        return result
+
+
+    def training_loss(self, pred, target):
+        assert pred.shape[-1] == self.length, 'pred.shape[-1]=%d is not equal to self.length=%d' % (pred.shape[-1], self.length)
+        assert pred.shape[0] == target.shape[0], 'pred.shape=%d is not equal to the target.shape=%d' % (pred.shape[0], target.shape[0])
+        device = pred.device
+
+        pred_reg = (pred[..., 0].sigmoid() * self.reg_scale - self.reg_scale/2.0) * self.step
+        pred_bin = pred[..., 1:(1+self.bin_count)]
+
+        diff_bin_target = torch.abs(target[..., None] - self.bins)
+        _, bin_idx = torch.min(diff_bin_target, dim=-1)
+    
+        bin_bias = self.bins[bin_idx]
+        bin_bias.requires_grad = False
+        result = pred_reg + bin_bias
+
+        target_bins = torch.full_like(pred_bin, self.cn, device=device)  # targets
+        n = pred.shape[0] 
+        target_bins[range(n), bin_idx] = self.cp
+
+        loss_bin = self.BCEbins(pred_bin, target_bins) # BCE
+
+        if self.use_loss_regression:
+            loss_regression = self.MSELoss(result, target)  # MSE        
+            loss = loss_bin + loss_regression
+        else:
+            loss = loss_bin
+
+        out_result = result.clamp(min=self.min, max=self.max)
+
+        return loss, out_result
+
+class ComputeLossBinOTA:
+    # Compute losses
+    def __init__(self, cfg, device='cuda:0'):
+        super(ComputeLossBinOTA, self).__init__()
+        
+        # Set Config
+        self.hyp = self.cfg.hyp
+        self.nc = 80
+        self.na = 3 # number of anchors
+        self.stride = torch.tensor([8., 16., 32.])
+        self.nl = 3 # number of detection layers (small, medium, large) =3
+        self.ssi = 0
+        self.gr = 1.0
+        self.anchors = torch.tensor([
+                        [[1.50000, 2.00000], [2.37500, 4.50000], [5.00000, 3.50000]],
+                        [[2.25000, 4.68750], [4.75000, 3.43750], [4.50000, 9.12500]],
+                        [[4.43750, 3.43750], [6.00000, 7.59375], [14.34375, 12.53125]]
+                    ], device='cpu')
+
+        # Define criteria
+        # 1. cls loss
+        with open('cfg/ava_categories_ratio.json', 'r') as fb:
             self.class_ratio = json.load(fb)
-        self.gamma = gamma
-        self.class_num = class_num
-        # self.beta = 0.999
-        self.size_average = size_average
-        self._init_class_weight()
-
-    def _init_class_weight(self):
         self.register_buffer('class_weight', torch.zeros(80))
         for i in range(1, 81):
             self.class_weight[i - 1] = 1 - self.class_ratio[str(i)]
-            # n = self.class_ratio[str(i)]
-            # self.class_weight[i - 1] = (1 - self.beta) / (1 - self.beta ** n)
-
-    def forward(self, inputs, targets):
-        '''
-        inputs: (N, C  ) -- result of sigmoid
-        targets: (N, C) -- one-hot variable
-        '''
-        assert self.class_num == targets.size(1)
-        assert self.class_num == inputs.size(1)
-        assert inputs.size(0) == targets.size(0)
-
-        weight_matrix = self.class_weight.expand(inputs.size(0), self.class_num)
-        weight_p1 = torch.exp(weight_matrix[targets == 1])
-        weight_p0 = torch.exp(1 - weight_matrix[targets == 0])
-        weight_p1 = weight_p1.to(targets.device)
-        weight_p0 = weight_p0.to(targets.device)
-        # weight_p1 = weight_matrix[targets == 1]
-        # weight_p0 = 1 - weight_matrix[targets == 0]
-        p_1 = inputs[targets == 1]
-        p_0 = inputs[targets == 0]
-
-        # loss = torch.sum(torch.log(p_1)) + torch.sum(torch.log(1 - p_0))  # origin bce loss
-        epsilon = 1e-7
-        loss1 = torch.pow(1 - p_1 + epsilon, self.gamma) * torch.log(p_1 + epsilon) * weight_p1
-        loss2 = torch.pow(p_0 + epsilon, self.gamma) * torch.log(1 - p_0 + epsilon) * weight_p0
-        loss = -torch.sum(loss1) - torch.sum(loss2)
-        if self.size_average:
-            loss = loss / inputs.size(0)
-
-        return loss
-
-
-def _sigmoid(x):
-    return torch.clamp(torch.sigmoid(x), min=1e-4, max=1 - 1e-4)
-
-def _softmax(x):
-    return torch.clamp(F.softmax(x, dim=-1), min=1e-4, max=1 - 1e-4)
-
-
-# this function works for building the groud truth 
-def build_targets_Ava(pred_boxes, target, anchors, num_anchors, num_classes, nH, nW, noobject_scale, object_scale, sil_thresh):
-    # nH, nW here are number of grids in y and x directions (7, 7 here)
-    target_cls = target['cls']
-    target_boxes = target['boxes']
-    nB = target_cls.size(0) # batch size
-    nA = num_anchors    # 5 for our case
-    nC = num_classes
-    anchor_step = len(anchors)//num_anchors
-    conf_mask  = torch.ones(nB, nA, nH, nW) * noobject_scale
-    coord_mask = torch.zeros(nB, nA, nH, nW)
-    cls_mask   = torch.zeros(nB, nA, nH, nW)
-    tx         = torch.zeros(nB, nA, nH, nW) 
-    ty         = torch.zeros(nB, nA, nH, nW) 
-    tw         = torch.zeros(nB, nA, nH, nW) 
-    th         = torch.zeros(nB, nA, nH, nW) 
-    tconf      = torch.zeros(nB, nA, nH, nW)
-    tcls       = torch.zeros(nB, nA, nH, nW, nC) 
-
-    # for each grid there are nA anchors
-    # nAnchors is the number of anchor for one image
-    nAnchors = nA*nH*nW
-    nPixels  = nH*nW
-    # for each image
-    for b in xrange(nB):
-        # get all anchor boxes in one image
-        # (4 * nAnchors)
-        cur_pred_boxes = pred_boxes[b*nAnchors:(b+1)*nAnchors].t()
-        # initialize iou score for each anchor
-        cur_ious = torch.zeros(nAnchors)
-        for t in xrange(50):
-            # for each anchor 4 coordinate parameters, already in the coordinate system for the whole image
-            # this loop is for anchors in each image
-            # for each anchor 5 parameters are available (class, x, y, w, h)
-            if target_boxes[b,t,2] == 0:
-                break
-            gx = target_boxes[b,t,0]*nW
-            gy = target_boxes[b,t,1]*nH
-            gw = target_boxes[b,t,2]*nW
-            gh = target_boxes[b,t,3]*nH
-            # groud truth boxes
-            cur_gt_boxes = torch.FloatTensor([gx,gy,gw,gh]).repeat(nAnchors,1).t()
-            # bbox_ious is the iou value between orediction and groud truth
-            cur_ious = torch.max(cur_ious, bbox_ious(cur_pred_boxes, cur_gt_boxes, x1y1x2y2=False))
-        # if iou > a given threshold, it is seen as it includes an object
-        # conf_mask[b][cur_ious>sil_thresh] = 0
-        conf_mask_t = conf_mask.view(nB, -1)
-        conf_mask_t[b][cur_ious>sil_thresh] = 0
-        conf_mask_tt = conf_mask_t[b].view(nA, nH, nW)
-        conf_mask[b] = conf_mask_tt
-
-    # number of ground truth
-    nGT = 0
-    nCorrect = 0
-    for b in xrange(nB):
-        # anchors for one batch (at least batch size, and for some specific classes, there might exist more than one anchor)
-        for t in xrange(50):
-            if target_boxes[b,t,2] == 0:
-                break
-            nGT = nGT + 1
-            best_iou = 0.0
-            best_n = -1
-            min_dist = 10000
-            # the values saved in target is ratios
-            # times by the width and height of the output feature maps nW and nH
-            gx = target_boxes[b,t,0]*nW
-            gy = target_boxes[b,t,1]*nH
-            gi = int(gx)
-            gj = int(gy)
-            gw = target_boxes[b,t,2]*nW
-            gh = target_boxes[b,t,3]*nH
-            gt_box = [0, 0, gw, gh]
-            for n in xrange(nA):
-                # get anchor parameters (2 values)
-                aw = anchors[anchor_step*n]
-                ah = anchors[anchor_step*n+1]
-                anchor_box = [0, 0, aw, ah]
-                # only consider the size (width and height) of the anchor box
-                iou  = bbox_iou(anchor_box, gt_box, x1y1x2y2=False)
-                # get the best anchor form with the highest iou
-                if iou > best_iou:
-                    best_iou = iou
-                    best_n = n
-
-
-            # then we determine the parameters for an anchor (4 values together)
-            gt_box = [gx, gy, gw, gh]
-            # find corresponding prediction box
-            pred_box = pred_boxes[b*nAnchors+best_n*nPixels+gj*nW+gi]
-
-            # only consider the best anchor box, for each image
-            coord_mask[b][best_n][gj][gi] = 1
-            cls_mask[b][best_n][gj][gi] = 1
-            # in this cell of the output feature map, there exists an object
-            conf_mask[b][best_n][gj][gi] = object_scale
-            tx[b][best_n][gj][gi] = target_boxes[b,t,0]*nW - gi
-            ty[b][best_n][gj][gi] = target_boxes[b,t,1]*nH - gj
-            tw[b][best_n][gj][gi] = math.log(gw/anchors[anchor_step*best_n])
-            th[b][best_n][gj][gi] = math.log(gh/anchors[anchor_step*best_n+1])
-            iou = bbox_iou(gt_box, pred_box, x1y1x2y2=False) # best_iou
-            # confidence equals to iou of the corresponding anchor
-            tconf[b][best_n][gj][gi] = iou
-            tcls[b][best_n][gj][gi][:] = target_cls[b,t,:]
-            # if ious larger than 0.5, we justify it as a correct prediction
-            if iou > 0.5:
-                nCorrect = nCorrect + 1
-
-    # true values are returned
-    return nGT, nCorrect, coord_mask, conf_mask, cls_mask, tx, ty, tw, th, tconf, tcls
-
-
-
-class RegionLoss_Ava(nn.Module):
-    # for our model anchors has 10 values and number of anchors is 5
-    # parameters: 24, 10 float values, 24, 5
-    def __init__(self, cfg):
-        super(RegionLoss_Ava, self).__init__()
-        self.num_classes    = cfg.MODEL.NUM_CLASSES
-        self.batch          = cfg.batch_size
-        self.anchors        = [1.28967,4.15014,   2.12714,5.09344,   3.27212,5.87423]
-        self.num_anchors    = 3
-        self.anchor_step    = len(self.anchors)//self.num_anchors    # each anchor has 2 parameters
-        self.object_scale   = 5
-        self.noobject_scale = 1
-        self.class_scale    = 1
-        self.coord_scale    = 1
-        self.loss_func      = binary_FocalLoss(0.5, self.num_classes, 'cfg/ava_categories_ratio.json')
-        self.thresh = 0.6
-
-    def forward(self, output, target):
-        # output (prediction) : B*A*(4+1+num_classes)*H*W
-        # B: number of batches
-        # A: number of anchors
-        # 4: 4 parameters for each bounding box
-        # 1: confidence score
-        # num_classes
-        # H: height of the image (in grids)
-        # W: width of the image (in grids)
-        # for each grid cell, there are A*(4+1+num_classes) parameters
+        self.BCEcls = nn.BCEWithLogitsLoss(pos_weight=self.class_weights.to(device), device='cuda:0')
         
-        # target['cls']: shape of [B, 50, num_classes]
-        # target['boxes']: [B, 50, 4]        
-        # 최대 담길 수 있는 객체의 수가 50개이고 차례대로 채워져 있음. 보통 첫번째~ 두번째 객체까지만 차는 듯하다.
+        # 2. obj loss
+        self.balance = [4.0, 1.0, 0.4]
+        self.BCEobj = nn.BCEWithLogitsLoss()
+
+    
+    def forward(self, p_cls, p_bbox, t_cls, t_bbox):
+        t_cls = convert_one_hot_to_batch_class(t_cls)
+        t_bbox = extract_bounding_boxes(t_bbox)
         
-        t0 = time.time()
-        nB = output.data.size(0)
-        nA = self.num_anchors
-        nC = self.num_classes
-        nH = output.data.size(2)
-        nW = output.data.size(3)
+        if isinstance(t_cls, np.ndarray):
+            t_bbox = torch.Tensor(t_bbox)
+            t_cls = torch.Tensor(t_cls)
+            
+        targets = torch.cat((t_bbox, t_cls[..., 1:]), dim=1)
         
-        # resize the output (all parameters for each anchor can be reached)
-        output   = output.view(nB, nA, (5+nC), nH, nW) # [B, 425, 7, 7] -> [B, 3, 85, 7, 7]
+        p = [torch.cat((bbox, cls), dim=4) for bbox, cls in zip(p_bbox, p_cls)]
+
+        total_loss, loss_items = self.__call__(p, targets)
         
-        # anchor's parameter tx
-        x    = torch.sigmoid(output.index_select(2, Variable(torch.cuda.LongTensor([0]))).view(nB, nA, nH, nW))
-        # anchor's parameter ty
-        y    = torch.sigmoid(output.index_select(2, Variable(torch.cuda.LongTensor([1]))).view(nB, nA, nH, nW))
-        # anchor's parameter tw
-        w    = output.index_select(2, Variable(torch.cuda.LongTensor([2]))).view(nB, nA, nH, nW)
-        # anchor's parameter th
-        h    = output.index_select(2, Variable(torch.cuda.LongTensor([3]))).view(nB, nA, nH, nW)
-        # confidence score for each anchor
-        conf = torch.sigmoid(output.index_select(2, Variable(torch.cuda.LongTensor([4]))).view(nB, nA, nH, nW))
-        # anchor's parameter class label
-        cls  = output.index_select(2, Variable(torch.linspace(5,5+nC-1,nC).long().cuda()))
-        # resize the data structure so that for every anchor there is a class label in the last dimension
-        cls  = cls.view(nB*nA, nC, nH*nW).transpose(1,2).contiguous().view(nB*nA*nH*nW, nC)
-        t1 = time.time()
+        return total_loss, loss_items
 
-        # for the prediction of localization of each bounding box, there exist 4 parameters (tx, ty, tw, th)
-        pred_boxes = torch.cuda.FloatTensor(4, nB*nA*nH*nW)
-        # tx and ty
-        grid_x = torch.linspace(0, nW-1, nW).repeat(nH,1).repeat(nB*nA, 1, 1).view(nB*nA*nH*nW).cuda()
-        grid_y = torch.linspace(0, nH-1, nH).repeat(nW,1).t().repeat(nB*nA, 1, 1).view(nB*nA*nH*nW).cuda()
-        # for each anchor there are anchor_step variables (with the structure num_anchor*anchor_step)
-        # for each row(anchor), the first variable is anchor's width, second is anchor's height
-        # pw and ph
-        anchor_w = torch.Tensor(self.anchors).view(nA, self.anchor_step).index_select(1, torch.LongTensor([0])).cuda()
-        anchor_h = torch.Tensor(self.anchors).view(nA, self.anchor_step).index_select(1, torch.LongTensor([1])).cuda()
-        # for each pixel (grid) repeat the above process (obtain width and height of each grid)
-        anchor_w = anchor_w.repeat(nB, 1).repeat(1, 1, nH*nW).view(nB*nA*nH*nW)
-        anchor_h = anchor_h.repeat(nB, 1).repeat(1, 1, nH*nW).view(nB*nA*nH*nW)
-        # prediction of bounding box localization
-        # x.data and y.data: top left corner of the anchor
-        # grid_x, grid_y: tx and ty predictions made by yowo
+    def __call__(self, p, targets):  # predictions, targets, model   
+        device = targets.device
+        lcls, lbox, lobj = torch.zeros(1, device=device), torch.zeros(1, device=device), torch.zeros(1, device=device)
+        bs, as_, gjs, gis, targets, anchors = self.build_targets(p, targets, img_shape=224)
+        pre_gen_gains = [torch.tensor(pp.shape, device=device)[[3, 2, 3, 2]] for pp in p] 
+    
 
-        x_data = x.data.view(-1)
-        y_data = y.data.view(-1)
-        w_data = w.data.view(-1)
-        h_data = h.data.view(-1)
+        # Losses
+        for i, pi in enumerate(p):  # layer index, layer predictions
+            b, a, gj, gi = bs[i], as_[i], gjs[i], gis[i]  # image, anchor, gridy, gridx
+            tobj = torch.zeros_like(pi[..., 0], device=device)  # target obj
 
-        pred_boxes[0] = x_data + grid_x    # bx
-        pred_boxes[1] = y_data + grid_y    # by
-        pred_boxes[2] = torch.exp(w_data) * anchor_w    # bw
-        pred_boxes[3] = torch.exp(h_data) * anchor_h    # bh
-        # the size -1 is inferred from other dimensions
-        # pred_boxes (nB*nA*nH*nW, 4)
-        pred_boxes = convert2cpu(pred_boxes.transpose(0,1).contiguous().view(-1,4))
-        t2 = time.time()
+            obj_idx = self.wh_bin_sigmoid.get_length()*2 + 2     # x,y, w-bce, h-bce     # xy_bin_sigmoid.get_length()*2
 
-        nGT, nCorrect, coord_mask, conf_mask, cls_mask, tx, ty, tw, th, tconf, tcls = build_targets_Ava(pred_boxes, target, self.anchors, nA, nC, \
-                                                               nH, nW, self.noobject_scale, self.object_scale, self.thresh)
-        cls_mask = (cls_mask == 1)
-        #  keep those with high box confidence scores (greater than 0.25) as our final predictions
-        nProposals = int((conf > 0.25).sum().data.item())
+            n = b.shape[0]  # number of targets
+            if n:
+                ps = pi[b, a, gj, gi]  # prediction subset corresponding to targets
 
-        tx    = Variable(tx.cuda())
-        ty    = Variable(ty.cuda())
-        tw    = Variable(tw.cuda())
-        th    = Variable(th.cuda())
-        tconf = Variable(tconf.cuda())
-        tcls = Variable(tcls.view(-1, nC)[cls_mask.view(-1), :].long().cuda()) # TODO: CHECKOUT THIS ONE
+                # Regression
+                grid = torch.stack([gi, gj], dim=1)
+                selected_tbox = targets[i][:, 2:6] * pre_gen_gains[i]
+                selected_tbox[:, :2] -= grid
 
-        coord_mask = Variable(coord_mask.cuda())
-        conf_mask  = Variable(conf_mask.cuda().sqrt())
-        cls_mask   = Variable(cls_mask.view(-1, 1).repeat(1,nC).cuda()) # [B, na, 7, 7] -> [B*na*7*7, 1] -> [B*na*7*7, nC]
-        cls        = cls[cls_mask].view(-1, nC)  # cls: [245, 80]
+                w_loss, pw = self.wh_bin_sigmoid.training_loss(ps[..., 2:(3+self.bin_count)], selected_tbox[..., 2] / anchors[i][..., 0])
+                h_loss, ph = self.wh_bin_sigmoid.training_loss(ps[..., (3+self.bin_count):obj_idx], selected_tbox[..., 3] / anchors[i][..., 1])
 
-        t3 = time.time()
+                pw *= anchors[i][..., 0]
+                ph *= anchors[i][..., 1]
 
-        # losses between predictions and targets (ground truth)
-        # In total 6 aspects are considered as losses: 
-        # 4 for bounding box location, 2 for prediction confidence and classification seperately
-        loss_x = self.coord_scale * nn.SmoothL1Loss(reduction='sum')(x*coord_mask, tx*coord_mask)/2.0
-        loss_y = self.coord_scale * nn.SmoothL1Loss(reduction='sum')(y*coord_mask, ty*coord_mask)/2.0
-        loss_w = self.coord_scale * nn.SmoothL1Loss(reduction='sum')(w*coord_mask, tw*coord_mask)/2.0
-        loss_h = self.coord_scale * nn.SmoothL1Loss(reduction='sum')(h*coord_mask, th*coord_mask)/2.0
-        loss_conf = nn.MSELoss(reduction='sum')(conf*conf_mask, tconf*conf_mask)/2.0
+                px = ps[:, 0].sigmoid() * 2. - 0.5
+                py = ps[:, 1].sigmoid() * 2. - 0.5
 
-        # try binary_FocalLoss
-        pose_output = _softmax(cls[:, :14])
-        inter_output = _sigmoid(cls[:, 14:])
-        total_output = torch.cat([pose_output, inter_output], dim=1)
-        loss_cls = self.class_scale * self.loss_func(total_output, tcls)  # cls_loss
+                lbox += w_loss + h_loss # + x_loss + y_loss
+                pbox = torch.cat((px.unsqueeze(1), py.unsqueeze(1), pw.unsqueeze(1), ph.unsqueeze(1)), 1).to(device)  # predicted box
+                iou = bbox_iou(pbox.T, selected_tbox, x1y1x2y2=False, CIoU=True)  # iou(prediction, target)
+                lbox += (1.0 - iou).mean()  # iou loss
 
-        return loss_x+loss_y+loss_w+loss_h, loss_conf, loss_cls
+                # Objectness
+                tobj[b, a, gj, gi] = (1.0 - self.gr) + self.gr * iou.detach().clamp(0).type(tobj.dtype)  # iou ratio
+
+                # Classification
+                selected_tcls = targets[i][:, 1].long()
+                if self.nc > 1:  # cls loss (only if multiple classes)
+                    t = torch.full_like(ps[:, (1+obj_idx):], self.cn, device=device)  # targets
+                    t[range(n), selected_tcls] = self.cp
+                    lcls += self.BCEcls(ps[:, (1+obj_idx):], t)  # BCE
+
+            obji = self.BCEobj(pi[..., obj_idx], tobj)
+            lobj += obji * self.balance[i]  # obj loss
+
+        lbox *= self.hyp['box']
+        lobj *= self.hyp['obj']
+        lcls *= self.hyp['cls']
+        bs = tobj.shape[0]  # batch size
+
+        loss = lbox + lobj + lcls
+        return loss * bs, torch.cat((lbox, lobj, lcls, loss)).detach() # shape of (4, )
+
+    def build_targets(self, p, targets, img_shape=224):
+        
+        #indices, anch = self.find_positive(p, targets)
+        indices, anch = self.find_3_positive(p, targets)
+        #indices, anch = self.find_4_positive(p, targets)
+        #indices, anch = self.find_5_positive(p, targets)
+        #indices, anch = self.find_9_positive(p, targets)
+
+        matching_bs = [[] for pp in p]
+        matching_as = [[] for pp in p]
+        matching_gjs = [[] for pp in p]
+        matching_gis = [[] for pp in p]
+        matching_targets = [[] for pp in p]
+        matching_anchs = [[] for pp in p]
+        
+        nl = len(p)    
+    
+        for batch_idx in range(p[0].shape[0]):
+        
+            b_idx = targets[:, 0]==batch_idx
+            this_target = targets[b_idx]
+            if this_target.shape[0] == 0:
+                continue
+                
+            txywh = this_target[:, 2:6] * img_shape
+            txyxy = xywh2xyxy(txywh)
+
+            pxyxys = []
+            p_cls = []
+            p_obj = []
+            from_which_layer = []
+            all_b = []
+            all_a = []
+            all_gj = []
+            all_gi = []
+            all_anch = []
+            
+            for i, pi in enumerate(p):
+                
+                obj_idx = self.wh_bin_sigmoid.get_length()*2 + 2
+                
+                b, a, gj, gi = indices[i]
+                idx = (b == batch_idx)
+                b, a, gj, gi = b[idx], a[idx], gj[idx], gi[idx]                
+                all_b.append(b)
+                all_a.append(a)
+                all_gj.append(gj)
+                all_gi.append(gi)
+                all_anch.append(anch[i][idx])
+                from_which_layer.append(torch.ones(size=(len(b),)) * i)
+                
+                fg_pred = pi[b, a, gj, gi]                
+                p_obj.append(fg_pred[:, obj_idx:(obj_idx+1)])
+                p_cls.append(fg_pred[:, (obj_idx+1):])
+                
+                grid = torch.stack([gi, gj], dim=1)
+                pxy = (fg_pred[:, :2].sigmoid() * 2. - 0.5 + grid) * self.stride[i] #/ 8.
+                #pwh = (fg_pred[:, 2:4].sigmoid() * 2) ** 2 * anch[i][idx] * self.stride[i] #/ 8.
+                pw = self.wh_bin_sigmoid.forward(fg_pred[..., 2:(3+self.bin_count)].sigmoid()) * anch[i][idx][:, 0] * self.stride[i]
+                ph = self.wh_bin_sigmoid.forward(fg_pred[..., (3+self.bin_count):obj_idx].sigmoid()) * anch[i][idx][:, 1] * self.stride[i]
+                
+                pxywh = torch.cat([pxy, pw.unsqueeze(1), ph.unsqueeze(1)], dim=-1)
+                pxyxy = xywh2xyxy(pxywh)
+                pxyxys.append(pxyxy)
+            
+            pxyxys = torch.cat(pxyxys, dim=0)
+            if pxyxys.shape[0] == 0:
+                continue
+            p_obj = torch.cat(p_obj, dim=0)
+            p_cls = torch.cat(p_cls, dim=0)
+            from_which_layer = torch.cat(from_which_layer, dim=0)
+            all_b = torch.cat(all_b, dim=0)
+            all_a = torch.cat(all_a, dim=0)
+            all_gj = torch.cat(all_gj, dim=0)
+            all_gi = torch.cat(all_gi, dim=0)
+            all_anch = torch.cat(all_anch, dim=0)
+        
+            pair_wise_iou = box_iou(txyxy, pxyxys)
+
+            pair_wise_iou_loss = -torch.log(pair_wise_iou + 1e-8)
+
+            top_k, _ = torch.topk(pair_wise_iou, min(10, pair_wise_iou.shape[1]), dim=1)
+            dynamic_ks = torch.clamp(top_k.sum(1).int(), min=1)
+
+            gt_cls_per_image = (
+                F.one_hot(this_target[:, 1].to(torch.int64), self.nc)
+                .float()
+                .unsqueeze(1)
+                .repeat(1, pxyxys.shape[0], 1)
+            )
+
+            num_gt = this_target.shape[0]            
+            cls_preds_ = (
+                p_cls.float().unsqueeze(0).repeat(num_gt, 1, 1).sigmoid_()
+                * p_obj.unsqueeze(0).repeat(num_gt, 1, 1).sigmoid_()
+            )
+
+            y = cls_preds_.sqrt_()
+            pair_wise_cls_loss = F.binary_cross_entropy_with_logits(
+               torch.log(y/(1-y)) , gt_cls_per_image, reduction="none"
+            ).sum(-1)
+            del cls_preds_
+        
+            cost = (
+                pair_wise_cls_loss
+                + 3.0 * pair_wise_iou_loss
+            )
+
+            matching_matrix = torch.zeros_like(cost)
+
+            for gt_idx in range(num_gt):
+                _, pos_idx = torch.topk(
+                    cost[gt_idx], k=dynamic_ks[gt_idx].item(), largest=False
+                )
+                matching_matrix[gt_idx][pos_idx] = 1.0
+
+            del top_k, dynamic_ks
+            anchor_matching_gt = matching_matrix.sum(0)
+            if (anchor_matching_gt > 1).sum() > 0:
+                _, cost_argmin = torch.min(cost[:, anchor_matching_gt > 1], dim=0)
+                matching_matrix[:, anchor_matching_gt > 1] *= 0.0
+                matching_matrix[cost_argmin, anchor_matching_gt > 1] = 1.0
+            fg_mask_inboxes = matching_matrix.sum(0) > 0.0
+            matched_gt_inds = matching_matrix[:, fg_mask_inboxes].argmax(0)
+        
+            from_which_layer = from_which_layer[fg_mask_inboxes]
+            all_b = all_b[fg_mask_inboxes]
+            all_a = all_a[fg_mask_inboxes]
+            all_gj = all_gj[fg_mask_inboxes]
+            all_gi = all_gi[fg_mask_inboxes]
+            all_anch = all_anch[fg_mask_inboxes]
+        
+            this_target = this_target[matched_gt_inds]
+        
+            for i in range(nl):
+                layer_idx = from_which_layer == i
+                matching_bs[i].append(all_b[layer_idx])
+                matching_as[i].append(all_a[layer_idx])
+                matching_gjs[i].append(all_gj[layer_idx])
+                matching_gis[i].append(all_gi[layer_idx])
+                matching_targets[i].append(this_target[layer_idx])
+                matching_anchs[i].append(all_anch[layer_idx])
+
+        for i in range(nl):
+            if matching_targets[i] != []:
+                matching_bs[i] = torch.cat(matching_bs[i], dim=0)
+                matching_as[i] = torch.cat(matching_as[i], dim=0)
+                matching_gjs[i] = torch.cat(matching_gjs[i], dim=0)
+                matching_gis[i] = torch.cat(matching_gis[i], dim=0)
+                matching_targets[i] = torch.cat(matching_targets[i], dim=0)
+                matching_anchs[i] = torch.cat(matching_anchs[i], dim=0)
+            else:
+                matching_bs[i] = torch.tensor([], device='cuda:0', dtype=torch.int64)
+                matching_as[i] = torch.tensor([], device='cuda:0', dtype=torch.int64)
+                matching_gjs[i] = torch.tensor([], device='cuda:0', dtype=torch.int64)
+                matching_gis[i] = torch.tensor([], device='cuda:0', dtype=torch.int64)
+                matching_targets[i] = torch.tensor([], device='cuda:0', dtype=torch.int64)
+                matching_anchs[i] = torch.tensor([], device='cuda:0', dtype=torch.int64)
+
+        return matching_bs, matching_as, matching_gjs, matching_gis, matching_targets, matching_anchs       
+
+    def find_3_positive(self, p, targets):
+        # Build targets for compute_loss(), input targets(image,class,x,y,w,h)
+        na, nt = self.na, targets.shape[0]  # number of anchors, targets
+        indices, anch = [], []
+        gain = torch.ones(7, device=targets.device).long()  # normalized to gridspace gain
+        ai = torch.arange(na, device=targets.device).float().view(na, 1).repeat(1, nt)  # same as .repeat_interleave(nt)
+        targets = torch.cat((targets.repeat(na, 1, 1), ai[:, :, None]), 2)  # append anchor indices
+
+        g = 0.5  # bias
+        off = torch.tensor([[0, 0],
+                            [1, 0], [0, 1], [-1, 0], [0, -1],  # j,k,l,m
+                            # [1, 1], [1, -1], [-1, 1], [-1, -1],  # jk,jm,lk,lm
+                            ], device=targets.device).float() * g  # offsets
+
+        for i in range(self.nl):
+            anchors = self.anchors[i]
+            gain[2:6] = torch.tensor(p[i].shape)[[3, 2, 3, 2]]  # xyxy gain
+
+            # Match targets to anchors
+            t = targets * gain
+            if nt:
+                # Matches
+                r = t[:, :, 4:6] / anchors[:, None]  # wh ratio
+                j = torch.max(r, 1. / r).max(2)[0] < self.hyp['anchor_t']  # compare
+                # j = wh_iou(anchors, t[:, 4:6]) > model.hyp['iou_t']  # iou(3,n)=wh_iou(anchors(3,2), gwh(n,2))
+                t = t[j]  # filter
+
+                # Offsets
+                gxy = t[:, 2:4]  # grid xy
+                gxi = gain[[2, 3]] - gxy  # inverse
+                j, k = ((gxy % 1. < g) & (gxy > 1.)).T
+                l, m = ((gxi % 1. < g) & (gxi > 1.)).T
+                j = torch.stack((torch.ones_like(j), j, k, l, m))
+                t = t.repeat((5, 1, 1))[j]
+                offsets = (torch.zeros_like(gxy)[None] + off[:, None])[j]
+            else:
+                t = targets[0]
+                offsets = 0
+
+            # Define
+            b, c = t[:, :2].long().T  # image, class
+            gxy = t[:, 2:4]  # grid xy
+            gwh = t[:, 4:6]  # grid wh
+            gij = (gxy - offsets).long()
+            gi, gj = gij.T  # grid xy indices
+
+            # Append
+            a = t[:, 6].long()  # anchor indices
+            indices.append((b, a, gj.clamp_(0, gain[3] - 1), gi.clamp_(0, gain[2] - 1)))  # image, anchor, grid indices
+            anch.append(anchors[a])  # anchors
+
+        return indices, anch
+
 
 
 if __name__ == '__main__':
