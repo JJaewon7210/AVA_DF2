@@ -28,7 +28,7 @@ names: [
 
 # opt parameter (from main.py in yolov7 project)
 weights: ''  # initial weights path
-epochs: 12  # number of epochs
+epochs: 10  # number of epochs
 batch_size: 4  # total batch size for all GPUs
 batch_size_test: 1
 img_size: [224, 224]  # train image sizes
@@ -56,4 +56,4 @@ bbox_interval: 1  # Set bounding-box image logging interval for W&B
 save_period: -1  # Log model after every "save_period" epoch
 artifact_alias: latest  # version of dataset artifact to be used
 v5_metric: false  # assume maximum recall as 1.0 in AP calculation
-log_step: 1000 # after every 'logging_step' record the performance to the wandb
+log_step: 100 # after every 'logging_step' record the performance to the wandb

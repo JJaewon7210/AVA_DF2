@@ -370,10 +370,7 @@ class RegionLoss_Ava(nn.Module):
         total_output = torch.cat([pose_output, inter_output], dim=1)
         loss_cls = self.class_scale * self.loss_func(total_output, tcls)  # cls_loss
 
-        # sum of loss
-        loss = loss_x + loss_y + loss_w + loss_h + loss_conf + loss_cls
-
-        return loss, (loss_x+loss_y+loss_w+loss_h, loss_conf, loss_cls)
+        return loss_x+loss_y+loss_w+loss_h, loss_conf, loss_cls
 
 
 if __name__ == '__main__':

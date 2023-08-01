@@ -28,7 +28,7 @@ from utils.wandb_logging.wandb_utils import WandbLogger, check_wandb_resume
 from utils.scheduler import CosineAnnealingWarmupRestarts
 from utils.torch_utils import ModelEMA, select_device, intersect_dicts, torch_distributed_zero_first, is_parallel
 from utils.plots import plot_images, plot_labels, plot_results, plot_evolution
-from utils.loss import CustomLoss_
+from utils.loss import CustomLoss_, WeightedMultiTaskLoss
 from utils.loss_ava import RegionLoss_Ava
 from datasets.ava_dataset import AvaWithPseudoLabel
 from datasets.yolo_datasets import DeepFasion2WithPseudoLabel, InfiniteDataLoader
@@ -112,11 +112,7 @@ def main(hyp, opt, device, tb_writer):
     
     # 7. Optimizer, LR scheduler 
     optimizer = optim.Adam(model.parameters(), lr=hyp['lr0'], weight_decay=hyp['weight_decay'] )
-    scheduler = CosineAnnealingWarmupRestarts(optimizer=optimizer, 
-                                              max_lr=hyp['lrmax'],
-                                              min_lr=hyp['lr0'],
-                                              first_cycle_steps=opt.epochs * num_batch,
-                                              warmup_steps=hyp['warmup_epochs'] * num_batch)
+    scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=hyp['lrmax'], epochs = epochs, steps_per_epoch=num_batch)
 
 
     # 8. Resume
@@ -150,6 +146,7 @@ def main(hyp, opt, device, tb_writer):
                 f'Starting training for {epochs} epochs...')
     DF2_L = CustomLoss_()
     AVA_L = RegionLoss_Ava(cfg = opt)
+    LOSS = WeightedMultiTaskLoss(num_tasks = 3)
     
     # Start epoch ------------------------------------------------------------------------------------------------------
     for epoch in range(start_epoch, epochs):  
@@ -192,6 +189,7 @@ def main(hyp, opt, device, tb_writer):
             # Concatenate 'imgs_duplicated' and 'clips' along the first dimension, which has the shape of [2B, 3, T, H, W]
             imgs_duplicated = imgs.unsqueeze(2).repeat((1, 1, clips.shape[2], 1, 1))
             model_input = torch.cat([imgs_duplicated, clips], dim=0)
+            model_input = clips
             
             # Batch-02. Forward
             with amp.autocast(enabled=cuda):
@@ -211,13 +209,13 @@ def main(hyp, opt, device, tb_writer):
                 target = {}
                 target['cls'] = torch.Tensor(cls)
                 target['boxes'] = torch.Tensor(boxes)
-                lossAVA_00, lossitemAVA_00 = AVA_L.forward(out_AVA_00, target)
-                lossAVA_01, lossitemAVA_01 = AVA_L.forward(out_AVA_01, target)
-                lossAVA_02, lossitemAVA_02 = AVA_L.forward(out_AVA_02, target)
-                total_loss = lossAVA_00 + lossAVA_01 + lossAVA_02
+                lossitemAVA_00 = AVA_L.forward(out_AVA_00, target)
+                lossitemAVA_01 = AVA_L.forward(out_AVA_01, target)
+                lossitemAVA_02 = AVA_L.forward(out_AVA_02, target)
                 lossBboxAVA = lossitemAVA_00[0] + lossitemAVA_01[0] + lossitemAVA_02[0]
                 lossObjAVA = lossitemAVA_00[1] + lossitemAVA_01[1] + lossitemAVA_02[1]
                 lossClsAVA = lossitemAVA_00[2] + lossitemAVA_01[2] + lossitemAVA_02[2]
+                total_loss = LOSS([lossBboxAVA, lossObjAVA, lossClsAVA])
                 
                 
             # Batch-03. Backward
@@ -225,6 +223,7 @@ def main(hyp, opt, device, tb_writer):
             scaler.step(optimizer)  # optimizer.step
             scaler.update()
             optimizer.zero_grad()
+            scheduler.step()
 
             # Batch-04. Print
             loss_item = torch.tensor([lossBboxAVA, lossObjAVA, lossClsAVA],device=device)
@@ -234,17 +233,18 @@ def main(hyp, opt, device, tb_writer):
                 mtotal_loss = (mtotal_loss * i + total_loss) / (i+1) # update mean total_loss
                 
             gpu_memory_usage_gb = '%.3gG' % (torch.cuda.memory_reserved() / 1E9 if torch.cuda.is_available() else 0)
+            lr = [x['lr'] for x in optimizer.param_groups]
             output_string = '%g/%g' % (epoch, epochs - 1)  # Display current epoch / total epochs
             output_string += ' ' + gpu_memory_usage_gb
             for loss_idx in range(len(mloss)):
                 output_string += ' ' + '%10.4g' % mloss[loss_idx]
             output_string += ' ' + '%10.4g' % mtotal_loss
+            output_string += ' ' + '%10.6g' % lr[0]
             pbar.set_description(output_string)
             
             cur_step = epoch * num_batch + i
-            if (cur_step % opt.log_step == 0) and (cur_step > opt.log_step - 1):
-                tags = ['train/box_loss', 'train/obj_loss', 'train/cls(action)_loss', 'lr']
-                lr = [x['lr'] for x in optimizer.param_groups]
+            if (cur_step % opt.log_step) == 0:
+                tags = ['box_loss', 'obj_loss', 'cls(action)_loss', 'lr']
                 for x, tag in zip(list(mloss[:-1]) + lr, tags):
                     wandb_logger.log({tag: x})
                     
@@ -268,20 +268,12 @@ def main(hyp, opt, device, tb_writer):
                                                 save_dir.glob('train*.jpg') if x.exists()]})
 
         # End batch ----------------------------------------------------------------------------------------------------
-    scheduler.step()
+
     # End epoch --------------------------------------------------------------------------------------------------------
     
     # Start write ------------------------------------------------------------------------------------------------------
     final_epoch = epoch + 1 == epochs
     wandb_logger.current_epoch = epoch + 1
-
-    # Log
-    tags = ['epoch_train/box_loss', 'epoch_train/obj_loss', 'epoch_train/cls(action)_loss']
-    for x, tag in zip(list(mloss[:-1]), tags):
-        if tb_writer:
-            tb_writer.add_scalar(tag, x, epoch)  # tensorboard
-        if wandb_logger.wandb:
-            wandb_logger.log({tag: x})  # W&B
             
     # Update best score (Define best_fitness as minimum loss)
     fi = mtotal_loss
