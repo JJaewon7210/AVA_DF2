@@ -990,3 +990,41 @@ class ConfigObject:
             if key in self.__dict__:
                 print(f"Warning: Overwriting attribute {key}")
             setattr(self, key, value) 
+
+def convert_one_hot_to_batch_class(A):
+    """
+    This function converts a one-hot encoded array or tensor to a 2D tensor/array, where the second dimension represents [batch_num, class_num].
+
+    Parameters:
+    A (numpy.ndarray or torch.Tensor): A 3D one-hot encoded array/tensor of shape [Batch_size, 50, 80].
+                                      Each batch can contain up to 50 labels, each one-hot encoded with 80 classes.
+
+    Returns:
+    B (numpy.ndarray or torch.Tensor): A 2D tensor/array of shape [num_obj, 2], where num_obj is the total number of non-zero labels in A,
+                                       and the 2 columns represent [Batch_num, class_num] for each label.
+
+    Note:
+    This function assumes that A has only one '1' per label. If a label can have multiple '1's, the function needs to be adjusted accordingly.
+    """
+    B = []
+
+    if isinstance(A, np.ndarray):
+        for batch_num, batch in enumerate(A):
+            for label_num, label in enumerate(batch):
+                if np.sum(label) != 0:  # if the label is not all zeros
+                    class_num = np.argmax(label)  # get the index of the 1 in one-hot encoded class
+                    B.append([batch_num, class_num])
+        B = np.array(B)
+
+    elif torch.is_tensor(A):
+        for batch_num in range(A.size(0)):
+            for label_num in range(A.size(1)):
+                if torch.sum(A[batch_num, label_num]) != 0:  # if the label is not all zeros
+                    class_num = torch.argmax(A[batch_num, label_num])  # get the index of the 1 in one-hot encoded class
+                    B.append([batch_num, class_num.item()])
+        B = torch.tensor(B, device=A.device, dtype=A.dtype)  # make sure B has the same dtype and device as A
+
+    else:
+        print("Unsupported input type.")
+
+    return B
