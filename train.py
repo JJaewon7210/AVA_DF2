@@ -28,10 +28,13 @@ from utils.wandb_logging.wandb_utils import WandbLogger, check_wandb_resume
 from utils.scheduler import CosineAnnealingWarmupRestarts
 from utils.torch_utils import ModelEMA, select_device, intersect_dicts, torch_distributed_zero_first, is_parallel
 from utils.plots import plot_images, plot_labels, plot_results, plot_evolution
-from utils.loss import CustomLoss_, WeightedMultiTaskLoss
-from datasets.ava_dataset import AvaWithPseudoLabel
-from datasets.yolo_datasets import DeepFasion2WithPseudoLabel, InfiniteDataLoader
+
+from utils.loss_ava import ComputeLossOTA,  WeightedMultiTaskLoss
+from datasets.ava_dataset import AvaWithPseudoLabel, Ava
+from datasets.yolo_datasets import DeepFasion2WithPseudoLabel, LoadImagesAndLabels, InfiniteDataLoader
 from datasets.combined_dataset import CombinedDataset
+from test_ava import test_ava
+from test_df2 import test_df2
 
 logger = logging.getLogger(__name__)
 
@@ -100,15 +103,20 @@ def main(hyp, opt, device, tb_writer):
     dataloader = loader(dataset, batch_size=opt.batch_size, num_workers=opt.workers, collate_fn=CombinedDataset.collate_fn)
     num_batch = len(dataloader)  # number of batches
     
-    # testset_df2 = DeepFasion2WithPseudoLabel(path=opt.val, img_size=imgsz_test, batch_size=opt.batch_size_test, 
-    #                                         augment=False, hyp=opt.hyp, rect=False, image_weights=opt.image_weights,
-    #                                         cache_images=opt.cache_images, single_cls=opt.single_cls, 
-    #                                         stride=32, pad=0.0, prefix='val: ')
-    # testset_ava = AvaWithPseudoLabel(cfg=opt, split='val', only_detection=False)
-    # testset = CombinedDataset(testset_df2, testset_ava)
-    # loader = torch.utils.data.DataLoader if opt.image_weights else InfiniteDataLoader
-    # testloader = loader(testset, batch_size=opt.batch_size_test, num_workers=opt.workers, collate_fn=CombinedDataset.collate_fn)
-    
+    if not opt.notest:
+        logger.info('\n====> (For test) Loading LoadImagesAndLabels Dataset')
+        testset_df2 = LoadImagesAndLabels(path=opt.val, img_size=imgsz_test, batch_size=opt.batch_size_test, 
+                                                augment=False, hyp=opt.hyp, rect=False, image_weights=opt.image_weights,
+                                                cache_images=opt.cache_images, single_cls=opt.single_cls, 
+                                                stride=32, pad=0.0, prefix='val: ')
+        logger.info('\n====> (For test) Loading Ava Dataset')
+        testset_ava = Ava(cfg=opt, split='val', only_detection=False)
+        loader = torch.utils.data.DataLoader if opt.image_weights else InfiniteDataLoader
+        testloader_df2 = loader(testset_df2, batch_size=opt.batch_size_test, num_workers=opt.workers, collate_fn=LoadImagesAndLabels.collate_fn)
+        testloader_ava = loader(testset_ava, batch_size=opt.batch_size_test, num_workers=opt.workers)
+    else:
+        logger.info('\n====> No test section during training model.')
+        
     # 7. Optimizer, LR scheduler 
     optimizer = optim.Adam(model.parameters(), lr=hyp['lr0'], weight_decay=hyp['weight_decay'] )
     scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=hyp['lrmax'], epochs = epochs, steps_per_epoch=num_batch)
@@ -139,12 +147,12 @@ def main(hyp, opt, device, tb_writer):
     # Start training ----------------------------------------------------------------------------------------------------
     scheduler.last_epoch = start_epoch - 1  # do not move
     torch.save(model, wdir / 'init.pt')
-    scaler = amp.GradScaler(enabled=cuda)
+    scaler = amp.GradScaler(enabled=False)
     logger.info(f'Using {dataloader.num_workers} dataloader workers\n'
                 f'Logging results to {save_dir}\n'
                 f'Starting training for {epochs} epochs...')
-    DF2_L = CustomLoss_()
-    LOSS = WeightedMultiTaskLoss(num_tasks = 3)
+    AVA_L = ComputeLossOTA(cfg=opt)
+    LOSS = WeightedMultiTaskLoss(num_tasks=4)
     
     # Start epoch ------------------------------------------------------------------------------------------------------
     for epoch in range(start_epoch, epochs):  
@@ -152,8 +160,8 @@ def main(hyp, opt, device, tb_writer):
         optimizer.zero_grad()
         pbar = enumerate(dataloader)
         pbar = tqdm(pbar, total=num_batch)  # progress bar
-        logger.info(('\n' + '%10s' * 8) % ('Epoch', 'gpu_mem', 'box', 'obj', 'cls', 'total', 'lr'))
-        mloss = torch.zeros(3, device=device)  # mean losses
+        logger.info(('\n' + '%10s' * 7) % ('gpu_mem', 'box', 'obj', 'act', 'clo', 'total', 'lr'))
+        mloss = torch.zeros(4, device=device)  # mean losses
         mtotal_loss = torch.zeros(1, device=device) # mean total_loss (sum of losses)
         
         # Start batch ----------------------------------------------------------------------------------------------------
@@ -188,33 +196,26 @@ def main(hyp, opt, device, tb_writer):
             # Concatenate 'imgs_duplicated' and 'clips' along the first dimension, which has the shape of [2B, 3, T, H, W]
             imgs_duplicated = imgs.unsqueeze(2).repeat((1, 1, clips.shape[2], 1, 1))
             model_input = torch.cat([imgs_duplicated, clips], dim=0)
-            model_input = clips
             
             # Batch-02. Forward
-            with amp.autocast(enabled=cuda):
+            with amp.autocast(enabled=False):
                 out_bboxs, out_clos, out_acts = model(model_input)
                 
                 out_bbox_infer, out_bbox_features = out_bboxs[0], out_bboxs[1]
                 out_clo_infer, out_clo_features = out_clos[0], out_clos[1]
                 out_act_infer, out_act_features = out_acts[0], out_acts[1]
 
-                # total_loss, loss_items = compute_loss(preds, targets) #TODO: Define the loss function
-                out_AVA_00 = torch.cat((out_bbox_features[0][-batch_size:], out_act_features[0][-batch_size:]), dim=4)
-                out_AVA_01 = torch.cat((out_bbox_features[1][-batch_size:], out_act_features[1][-batch_size:]), dim=4)
-                out_AVA_02 = torch.cat((out_bbox_features[2][-batch_size:], out_act_features[2][-batch_size:]), dim=4)
-                out_AVA_00 = out_AVA_00.view(batch_size, 3 * 85, 28, 28)
-                out_AVA_01 = out_AVA_01.view(batch_size, 3 * 85, 14, 14)
-                out_AVA_02 = out_AVA_02.view(batch_size, 3 * 85, 7, 7)
-                target = {}
-                target['cls'] = torch.Tensor(cls)
-                target['boxes'] = torch.Tensor(boxes)
-                lossitemAVA_00 = AVA_L.forward(out_AVA_00, target)
-                lossitemAVA_01 = AVA_L.forward(out_AVA_01, target)
-                lossitemAVA_02 = AVA_L.forward(out_AVA_02, target)
-                lossBboxAVA = lossitemAVA_00[0] + lossitemAVA_01[0] + lossitemAVA_02[0]
-                lossObjAVA = lossitemAVA_00[1] + lossitemAVA_01[1] + lossitemAVA_02[1]
-                lossClsAVA = lossitemAVA_00[2] + lossitemAVA_01[2] + lossitemAVA_02[2]
-                total_loss = LOSS([lossBboxAVA, lossObjAVA, lossClsAVA])
+                #TODO: Define the loss function
+                out_bbox_AVA = [i[-batch_size:] for i in out_bbox_features]
+                out_bbox_DF2 = [i[:batch_size] for i in out_bbox_features]
+                out_act_AVA = [i[-batch_size:] for i in out_act_features]
+                out_clo_DF2 = [i[:batch_size] for i in out_clo_features]
+                
+                _sum, losses = AVA_L.forward_ava(p_cls=out_act_AVA, p_bbox=out_bbox_AVA, t_cls=cls, t_bbox=boxes)
+                lbox, lobj, lact, loss = torch.split(losses, 1)
+                _sum, losses = AVA_L.forward_df2(p_cls=out_clo_DF2, p_bbox=out_bbox_DF2, targets=labels)
+                _lbox, _lobj, lclo, loss = torch.split(losses, 1)
+                total_loss = LOSS([lbox, lobj, lact, lclo])
                 
                 
             # Batch-03. Backward
@@ -225,7 +226,7 @@ def main(hyp, opt, device, tb_writer):
             scheduler.step()
 
             # Batch-04. Print
-            loss_item = torch.tensor([lossBboxAVA, lossObjAVA, lossClsAVA],device=device)
+            loss_item = torch.tensor([lbox, lobj, lact, lclo],device=device)
             
             if torch.all(torch.isfinite(loss_item)):
                 mloss = (mloss * i + loss_item) / (i + 1)  # update mean losses
@@ -243,7 +244,7 @@ def main(hyp, opt, device, tb_writer):
             
             cur_step = epoch * num_batch + i
             if (cur_step % opt.log_step) == 0:
-                tags = ['box_loss', 'obj_loss', 'cls(action)_loss', 'lr']
+                tags = ['train/box_loss', 'train/obj_loss', 'train/act_loss', 'train/clo_loss', 'lr']
                 for x, tag in zip(list(mloss[:-1]) + lr, tags):
                     wandb_logger.log({tag: x})
                     
@@ -266,48 +267,102 @@ def main(hyp, opt, device, tb_writer):
                 wandb_logger.log({"Mosaics": [wandb_logger.wandb.Image(str(x), caption=x.name) for x in
                                                 save_dir.glob('train*.jpg') if x.exists()]})
 
-        # End batch ----------------------------------------------------------------------------------------------------
+            # End batch ----------------------------------------------------------------------------------------------------
 
-    # End epoch --------------------------------------------------------------------------------------------------------
+        # End epoch --------------------------------------------------------------------------------------------------------
     
-    # Start write ------------------------------------------------------------------------------------------------------
-    final_epoch = epoch + 1 == epochs
-    wandb_logger.current_epoch = epoch + 1
+        # Start write ------------------------------------------------------------------------------------------------------
+        final_epoch = epoch + 1 == epochs
+        wandb_logger.current_epoch = epoch + 1
+        
+        if not opt.notest or final_epoch:
+            results_ava, maps_ava, times_ava = test_ava(opt,
+                                        batch_size=opt.batch_size_test,
+                                        imgsz=imgsz_test,
+                                        model=model,
+                                        single_cls=opt.single_cls,
+                                        dataloader=testloader_ava,
+                                        save_dir=save_dir,
+                                        verbose=final_epoch,
+                                        plots=plots and final_epoch,
+                                        wandb_logger=wandb_logger,
+                                        compute_loss=False,
+                                        is_coco=False,
+                                        v5_metric=opt.v5_metric)
             
-    # Update best score (Define best_fitness as minimum loss)
-    fi = mtotal_loss
-    if fi < best_fitness:
-        best_fitness = fi
-    wandb_logger.end_epoch(best_result=best_fitness == fi)
-    
-    # Save model
-    if (not opt.nosave) or (final_epoch and not opt.evolve):  # if save
-        ckpt = {'epoch': epoch,
-                'best_fitness': best_fitness,
-                'training_results': results_file.read_text(),
-                'model': deepcopy(model.module if is_parallel(model) else model).half(),
-                'optimizer': optimizer.state_dict(),
-                'wandb_id': wandb_logger.wandb_run.id if wandb_logger.wandb else None}
+            results_df2, maps_df2, times_df2 = test_df2(opt,
+                                        batch_size=opt.batch_size_test,
+                                        imgsz=imgsz_test,
+                                        model=model,
+                                        single_cls=opt.single_cls,
+                                        dataloader=testloader_df2,
+                                        save_dir=save_dir,
+                                        verbose=final_epoch,
+                                        plots=plots and final_epoch,
+                                        wandb_logger=wandb_logger,
+                                        compute_loss=False,
+                                        is_coco=False,
+                                        v5_metric=opt.v5_metric)
+        # Log
+        tags = [
+                'metrics/precision(AVA)', 'metrics/recall(AVA)', 'metrics/mAP_0.5(AVA)', 'metrics/mAP_0.5:0.95(AVA)',
+                'val/box_loss(AVA)', 'val/obj_loss(AVA)', 'val/act_loss(AVA)',  # val loss
+                'metrics/precision(DF2)', 'metrics/recall(DF2)', 'metrics/mAP_0.5(DF2)', 'metrics/mAP_0.5:0.95(DF2)',
+                'val/box_loss(DF2)', 'val/obj_loss(DF2)', 'val/clo_loss(DF2)',  # val loss
+                ]  # params
+        
+        # Write
+        simple_tags = ['gpu_mem', 'box', 'obj', 'act', 'clo', 'total', 'lr']+[tag.split('/')[-1] for tag in tags]
+        formatted_tags = [f"{tag:<{width}}" for tag, width in zip(simple_tags, [10]* (7+len(simple_tags)))] 
+        header_line = " ".join(formatted_tags) + '\n'
 
-        # Save last, best and delete
-        torch.save(ckpt, last)
-        if best_fitness == fi:
-            torch.save(ckpt, best)
-        if (best_fitness == fi) and (epoch >= 200):
-            torch.save(ckpt, wdir / 'best_{:03d}.pt'.format(epoch))
-        if epoch == 0:
-            torch.save(ckpt, wdir / 'epoch_{:03d}.pt'.format(epoch))
-        elif ((epoch+1) % 25) == 0:
-            torch.save(ckpt, wdir / 'epoch_{:03d}.pt'.format(epoch))
-        elif epoch >= (epochs-5):
-            torch.save(ckpt, wdir / 'epoch_{:03d}.pt'.format(epoch))
-        if wandb_logger.wandb:
-            if ((epoch + 1) % opt.save_period == 0 and not final_epoch) and opt.save_period != -1:
-                wandb_logger.log_model(
-                    last.parent, opt, epoch, fi, best_model=best_fitness == fi)
-        del ckpt
+        if not os.path.exists(results_file) or os.path.getsize(results_file) == 0: # Check if file is empty or does not exist
+            with open(results_file, 'w') as f:
+                f.write(header_line)
 
-    # End write --------------------------------------------------------------------------------------------------------
+        with open(results_file, 'a') as f:
+            f.write(output_string + '%10.4g' * 7 % results_ava + '%10.4g' * 7 % results_df2 +'\n')  # append metrics, val_loss
+        
+        for x, tag in zip(list(results_ava) + list(results_df2), tags):
+            if tb_writer:
+                tb_writer.add_scalar(tag, x, epoch)  # tensorboard
+            if wandb_logger.wandb:
+                wandb_logger.log({tag: x})  # W&B
+                
+        # Update best score (Define best_fitness as minimum loss)
+        fi = mtotal_loss
+        if fi < best_fitness:
+            best_fitness = fi
+        wandb_logger.end_epoch(best_result=best_fitness == fi)
+        
+        # Save model
+        if (not opt.nosave) or (final_epoch and not opt.evolve):  # if save
+            ckpt = {'epoch': epoch,
+                    'best_fitness': best_fitness,
+                    'training_results': results_file.read_text(),
+                    'model': deepcopy(model.module if is_parallel(model) else model).half(),
+                    'optimizer': optimizer.state_dict(),
+                    'wandb_id': wandb_logger.wandb_run.id if wandb_logger.wandb else None}
+
+            # Save last, best and delete
+            torch.save(ckpt, last)
+            if best_fitness == fi:
+                torch.save(ckpt, best)
+            if (best_fitness == fi) and (epoch >= 200):
+                torch.save(ckpt, wdir / 'best_{:03d}.pt'.format(epoch))
+            if epoch == 0:
+                torch.save(ckpt, wdir / 'epoch_{:03d}.pt'.format(epoch))
+            elif ((epoch+1) % 25) == 0:
+                torch.save(ckpt, wdir / 'epoch_{:03d}.pt'.format(epoch))
+            elif epoch >= (epochs-5):
+                torch.save(ckpt, wdir / 'epoch_{:03d}.pt'.format(epoch))
+            if wandb_logger.wandb:
+                if ((epoch + 1) % opt.save_period == 0 and not final_epoch) and opt.save_period != -1:
+                    wandb_logger.log_model(
+                        last.parent, opt, epoch, fi, best_model=best_fitness == fi)
+            del ckpt
+
+        # End write --------------------------------------------------------------------------------------------------------
     # End training -----------------------------------------------------------------------------------------------------
 
 if __name__ == '__main__':
@@ -349,5 +404,10 @@ if __name__ == '__main__':
         # opt.hyp = opt.hyp or ('hyp.finetune.yaml' if opt.weights else 'hyp.scratch.yaml')
         opt.img_size.extend([opt.img_size[-1]] * (2 - len(opt.img_size)))  # extend to 2 sizes (train, test)
         opt.save_dir = increment_path(Path(opt.project) / opt.name, exist_ok=opt.exist_ok)  # increment run
+    
+    # Empty the cash for preventing 'cuda out of memory'
+    torch.cuda.empty_cache()
+    torch.cuda.reset_max_memory_allocated()
+    torch.cuda.synchronize()
     
     main(hyp, opt, device = torch.device('cuda:0'), tb_writer = None)

@@ -29,8 +29,8 @@ names: [
 # opt parameter (from main.py in yolov7 project)
 weights: ''  # initial weights path
 epochs: 10  # number of epochs
-batch_size: 4  # total batch size for all GPUs
-batch_size_test: 1
+batch_size: 2  # total batch size for all GPUs
+batch_size_test: 2
 img_size: [224, 224]  # train image sizes
 rect: false  # rectangular training
 resume: false  # resume most recent training
@@ -44,7 +44,7 @@ device: ''  # cuda device, i.e., 0 or 0,1,2,3 or cpu
 single_cls: false  # train multi-class data as single-class
 sync_bn: false  # use SyncBatchNorm, only available in DDP mode
 local_rank: -1  # DDP parameter, do not modify
-workers: 8  # maximum number of dataloader workers
+workers: 4  # maximum number of dataloader workers
 project: runs/train  # save to project/name
 entity: null  # W&B entity
 name: AVA_DF2  # save to project/name
