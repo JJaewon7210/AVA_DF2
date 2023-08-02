@@ -29,7 +29,6 @@ from utils.scheduler import CosineAnnealingWarmupRestarts
 from utils.torch_utils import ModelEMA, select_device, intersect_dicts, torch_distributed_zero_first, is_parallel
 from utils.plots import plot_images, plot_labels, plot_results, plot_evolution
 from utils.loss import CustomLoss_, WeightedMultiTaskLoss
-from utils.loss_ava import RegionLoss_Ava
 from datasets.ava_dataset import AvaWithPseudoLabel
 from datasets.yolo_datasets import DeepFasion2WithPseudoLabel, InfiniteDataLoader
 from datasets.combined_dataset import CombinedDataset
@@ -79,14 +78,14 @@ def main(hyp, opt, device, tb_writer):
     pretrained = weights.endswith('.pt')
     if pretrained:
         ckpt = torch.load(weights, map_location=device)  # load checkpoint
-        model = Model(cfg=opt).to(device)  #TODO: Define the model
+        model = Model(cfg=opt).to(device)
         exclude = ['anchor'] if (hyp.get('anchors')) and not opt.resume else []  # exclude keys
         state_dict = ckpt['model'].float().state_dict()  # to FP32
         state_dict = intersect_dicts(state_dict, model.state_dict(), exclude=exclude)  # intersect
         model.load_state_dict(state_dict, strict=False)  # load
         logger.info('Transferred %g/%g items from %s' % (len(state_dict), len(model.state_dict()), weights))  # report
     else:
-        model = Model(cfg=opt).to(device) #TODO: Define the model
+        model = Model(cfg=opt).to(device)
 
 
     # 6. Dataset, Dataloader
@@ -145,7 +144,6 @@ def main(hyp, opt, device, tb_writer):
                 f'Logging results to {save_dir}\n'
                 f'Starting training for {epochs} epochs...')
     DF2_L = CustomLoss_()
-    AVA_L = RegionLoss_Ava(cfg = opt)
     LOSS = WeightedMultiTaskLoss(num_tasks = 3)
     
     # Start epoch ------------------------------------------------------------------------------------------------------
@@ -175,7 +173,7 @@ def main(hyp, opt, device, tb_writer):
             '''
             
             clips, cls, boxes, feature_s, feature_m, feature_l = item2
-            clips = clips.to(device, non_blocking=True) # TODO: 노멀라이즈가 되어있음
+            clips = clips.to(device, non_blocking=True)
             '''
              Explanation of variables in item2_batch:
                - clips (torch.float32): Video clips data with shape [B, 3, T, H, W] which has the scale of 0~1

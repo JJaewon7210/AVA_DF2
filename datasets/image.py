@@ -136,7 +136,7 @@ def draw_umich_gaussian(heatmap, center, radius, k=1):
 
     masked_heatmap  = heatmap[y - top:y + bottom, x - left:x + right]
     masked_gaussian = gaussian[radius - top:radius + bottom, radius - left:radius + right]
-    if min(masked_gaussian.shape) > 0 and min(masked_heatmap.shape) > 0: # TODO debug
+    if min(masked_gaussian.shape) > 0 and min(masked_heatmap.shape) > 0:
         np.maximum(masked_heatmap, masked_gaussian * k, out=masked_heatmap)
     return heatmap
 
@@ -164,7 +164,7 @@ def draw_dense_reg(regmap, heatmap, center, value, radius, is_offset=False):
                                radius - left:radius + right]
     masked_reg = reg[:, radius - top:radius + bottom,
                         radius - left:radius + right]
-    if min(masked_gaussian.shape) > 0 and min(masked_heatmap.shape) > 0: # TODO debug
+    if min(masked_gaussian.shape) > 0 and min(masked_heatmap.shape) > 0:
         idx = (masked_gaussian >= masked_heatmap).reshape(1, masked_gaussian.shape[0], masked_gaussian.shape[1])
         masked_regmap = (1-idx) * masked_regmap + idx * masked_reg
     regmap[:, y - top:y + bottom, x - left:x + right] = masked_regmap

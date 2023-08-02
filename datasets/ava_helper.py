@@ -218,4 +218,4 @@ def get_max_objs(keyframe_indices, keyframe_boxes_and_labels):
     #         max_objs = num_boxes
 
     # return max_objs
-    return 50 #### MODIFICATION FOR NOW! TODO: FIX LATER!
+    return 50
