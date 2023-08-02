@@ -105,6 +105,14 @@ def test_ava(
     for batch_i, batch in  enumerate(tqdm(dataloader, desc=s)):
         clips = batch['clip'].to(device, non_blocking=True)
         clips = clips.half() if half else clips.float()
+        
+        video_idxs  = batch['metadata'][:, 0]
+        secs        = batch['metadata'][:, 1]
+        frame_idxs  = (secs - 900) * 30
+        paths       = testset_ava._image_paths[video_idxs][frame_idxs-1]
+        w0          = batch['metadata'][:, 2]
+        h0          = batch['metadata'][:, 3]
+
         img = clips[:, :, -1, :, :] # keyframe
 
         t_cls = convert_one_hot_to_batch_class(batch['cls'])
@@ -115,6 +123,7 @@ def test_ava(
             t_cls = torch.Tensor(t_cls)
         targets = torch.cat((t_bbox, t_cls[..., 1:]), dim=1).to(device)
         nb, _c, _t, height, width = clips.shape  # batch size, channels, T, height, width
+        
 
         with torch.no_grad():
             # Run model
@@ -143,7 +152,7 @@ def test_ava(
             labels = targets[targets[:, 0] == si, 1:]
             nl = len(labels)
             tcls = labels[:, 0].tolist() if nl else []  # target class
-            path = Path(paths[si]) # TODO: Define paths and shapes in AVA dataset
+            path = Path(paths[si])
             seen += 1
 
             if len(pred) == 0:
@@ -153,11 +162,11 @@ def test_ava(
 
             # Predictions
             predn = pred.clone()
-            scale_coords(img[si].shape[1:], predn[:, :4], shapes[si][0], shapes[si][1])  # native-space pred
+            scale_coords(img[si].shape[1:], predn[:, :4], (h0, w0), (height / h0, width / w0))  # native-space pred
 
             # Append to text file
             if save_txt:
-                gn = torch.tensor(shapes[si][0])[[1, 0, 1, 0]]  # normalization gain whwh
+                gn = torch.tensor((h0, w0))[[1, 0, 1, 0]]  # normalization gain whwh
                 for *xyxy, conf, cls in predn.tolist():
                     xywh = (xyxy2xywh(torch.tensor(xyxy).view(1, 4)) / gn).view(-1).tolist()  # normalized xywh
                     line = (cls, *xywh, conf) if save_conf else (cls, *xywh)  # label format
@@ -196,7 +205,7 @@ def test_ava(
 
                 # target boxes
                 tbox = xywh2xyxy(labels[:, 1:5])
-                scale_coords(img[si].shape[1:], tbox, shapes[si][0], shapes[si][1])  # native-space labels
+                scale_coords(img[si].shape[1:], tbox, (h0, w0), (height / h0, width / w0))  # native-space labels
                 if plots:
                     confusion_matrix.process_batch(predn, torch.cat((labels[:, 0:1], tbox), 1))
 
@@ -303,13 +312,12 @@ def test_ava(
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(prog='test.py')
     parser.add_argument('--weights', type=str, default='yolov7.pt', help='model.pt path(s)')
-    parser.add_argument('--data', type=str, default='data/coco.yaml', help='*.data path')
-    parser.add_argument('--batch-size', type=int, default=32, help='size of each image batch')
-    parser.add_argument('--img-size', type=int, default=640, help='inference size (pixels)')
+    parser.add_argument('--batch-size', type=int, default=1, help='size of each image batch')
+    parser.add_argument('--img-size', type=int, default=224, help='inference size (pixels)')
     parser.add_argument('--conf-thres', type=float, default=0.001, help='object confidence threshold')
     parser.add_argument('--iou-thres', type=float, default=0.65, help='IOU threshold for NMS')
     parser.add_argument('--task', default='val', help='train, val, test, speed or study')
-    parser.add_argument('--device', default='', help='cuda device, i.e. 0 or 0,1,2,3 or cpu')
+    parser.add_argument('--device', default=0, help='cuda device, i.e. 0 or 0,1,2,3 or cpu')
     parser.add_argument('--single-cls', action='store_true', help='treat as single-class dataset')
     parser.add_argument('--augment', action='store_true', help='augmented inference')
     parser.add_argument('--verbose', action='store_true', help='report mAP by class')
@@ -368,7 +376,7 @@ if __name__ == '__main__':
 
     elif opt.task == 'speed':  # speed benchmarks
         for w in opt.weights:
-            test_ava(opt.data, 
+            test_ava(opt, 
                      w, 
                      opt.batch_size, 
                      opt.img_size, 
@@ -377,25 +385,3 @@ if __name__ == '__main__':
                      save_json=False, 
                      plots=False, 
                      v5_metric=opt.v5_metric)
-
-    elif opt.task == 'study':  # run over a range of settings and save/plot
-        # python test.py --task study --data coco.yaml --iou 0.65 --weights yolov7.pt
-        x = list(range(256, 1536 + 128, 128))  # x axis (image sizes)
-        for w in opt.weights:
-            f = f'study_{Path(opt.data).stem}_{Path(w).stem}.txt'  # filename to save to
-            y = []  # y axis
-            for i in x:  # img-size
-                print(f'\nRunning {f} point {i}...')
-                r, _, t = test_ava(opt.data, 
-                                   w, 
-                                   opt.batch_size, 
-                                   i, 
-                                   opt.conf_thres, 
-                                   opt.iou_thres, 
-                                   opt.save_json,
-                                   plots=False, 
-                                   v5_metric=opt.v5_metric)
-                y.append(r + t)  # results and times
-            np.savetxt(f, y, fmt='%10.4g')  # save
-        os.system('zip -r study.zip study_*.txt')
-        plot_study_txt(x=x)  # plot
