@@ -7,13 +7,7 @@ logger = logging.getLogger(__name__)
 
 class CombinedDataset(Dataset):
     def __init__(self, dataset1, dataset2):
-        
-        # Assert the class names are as expected
-        assert type(dataset1).__name__ == 'DeepFasion2WithPseudoLabel', f"Unexpected class name for dataset1. \
-            Expected: 'DeepFasion2WithPseudoLabel', but got '{type(dataset1).__name__}'."
-        assert type(dataset2).__name__ == 'AvaWithPseudoLabel', f"Unexpected class name for dataset2. \
-            Expected: 'AvaWithPseudoLabel', but got '{type(dataset2).__name__}'."
-            
+
         self.datasetDF2 = dataset1
         self.datasetAVA = dataset2
         self.length = max(len(dataset1), len(dataset2))
