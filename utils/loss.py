@@ -8,18 +8,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from utils.general import bbox_iou, bbox_alpha_iou, box_iou, box_giou, box_diou, box_ciou, xywh2xyxy, box_iou_only_box1
-
-class WeightedMultiTaskLoss(nn.Module):
-    def __init__(self, num_tasks):
-        super().__init__()
-        self.params = nn.Parameter(torch.ones(num_tasks, device=torch.device('cuda:0'), requires_grad=True))
-
-    def forward(self, losses):
-        losses = [loss.to(torch.device('cuda:0')) for loss in losses]
-        
-        weighted_loss = 0.5 / (self.params ** 2) * torch.stack(losses) + torch.log(1 + self.params ** 2)
-        return torch.sum(weighted_loss)
-
     
 
 class CustomLoss_:
@@ -43,15 +31,9 @@ class CustomLoss_:
                         [[2.25000, 4.68750], [4.75000, 3.43750], [4.50000, 9.12500]],
                         [[4.43750, 3.43750], [6.00000, 7.59375], [14.34375, 12.53125]]
                     ], device='cpu')
-        self.hyp = {'lr0': 0.01, 'lrf': 0.1, 
-                    'momentum': 0.937, 'weight_decay': 0.0005, 
-                    'warmup_epochs': 3.0, 'warmup_momentum': 0.8, 'warmup_bias_lr': 0.1, 
-                    'box': 0.05, 
-                    'cls': 0.04875, 'cls_pw': 1.0, 
-                    'obj': 0.08575, 'obj_pw': 1.0, 
-                    'iou_t': 0.2, 'anchor_t': 40.0}
+        self.hyp = {'anchor_t': 40.0}
         
-        self.BCEcls = nn.BCEWithLogitsLoss(pos_weight=torch.tensor([self.hyp['cls_pw']], device='cpu'))
+        self.BCEcls = nn.BCEWithLogitsLoss(device='cpu')
     
     def loss_class_cloth(self, prediction, targets, pseudo_label):
         """
@@ -61,9 +43,8 @@ class CustomLoss_:
         - prediction: A list of tensors. 
             Each tensor represents the prediction for a different scale, 
             and has shape [batch size, number of anchors, grid size, grid size, number of classes].
-        - target: A list of tensors. 
-            Each tensor contains the targets for a different scale, 
-            with the same dimensions as the corresponding prediction tensor.
+        - target: torch.Tensor
+            [num_target, (1+4+13)]
         - pseudo_label: A list of tensors.
             Each tensor represents the bbox localization for a different scale,
             and has shape [batch size, number of anchors, grid size, grid size, 4+1]
@@ -152,24 +133,22 @@ class CustomLoss_:
                     - Batch: The batch size.
                     - num_anchors: The number of anchor boxes per grid cell.
                     - 28, 28: The grid size of the first scale.
-                    - (4+1+13+80): The number of prediction channels for each anchor, including:
+                    - (4+1+13): The number of prediction channels for each anchor, including:
                         - 4 channels for the bounding box coordinates (x, y, width, height).
                         - 1 channel for the confidence score (objectness probability).
                         - 13 channels for class probabilities (corresponding to the number of cloth classes in the deepfashion2 dataset).
-                        - 80 channels for class probabilities (corresponding to the number of action classes in the AVA2.2 dataset).
 
                 The second and third tensors have similar shapes but with different grid sizes.
 
             - `targets (torch.Tensor)`: Ground truth target values for the batch of shape 
-                - Example shape: [num_target, (1+4+13+80)].
+                - Example shape: [num_target, (1+4+13)].
                 - targets is a tensor representing the ground truth target values for the batch.
                 
                     - num_target: total target size in single batch.
-                    - 1+4+13+80: The total number of target channels per target, including:
+                    - 1+4+13: The total number of target channels per target, including:
                         - 1 channel for the image index (batch index)
                         - 4 channels for the bounding box coordinates (x, y, width, height).
                         - 13 channels for cloth class probabilities.
-                        - 80 channels for action class probabilities.
         
             - `img_shape (int, optional)`: The shape of the input image (square image). Defaults to 224.
 
