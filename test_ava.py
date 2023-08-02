@@ -82,12 +82,12 @@ def test_ava(
     # Dataloader
     if not training:
         if device.type != 'cpu':
-            model(torch.zeros(1, 3, imgsz, imgsz).to(device).type_as(next(model.parameters())))  # run once
+            model(torch.zeros(1, 3, 16, imgsz, imgsz).to(device).type_as(next(model.parameters())))  # run once
 
         testset_ava = Ava(cfg=opt, split='val', only_detection=False)
 
         loader = torch.utils.data.DataLoader if opt.image_weights else InfiniteDataLoader
-        dataloader = loader(testset_ava, batch_size=opt.batch_size_test, num_workers=opt.workers, collate_fn=LoadImagesAndLabels.collate_fn)
+        dataloader = loader(testset_ava, batch_size=opt.batch_size_test, num_workers=opt.workers)
         
 
     if v5_metric:
@@ -95,7 +95,8 @@ def test_ava(
     
     seen = 0
     confusion_matrix = ConfusionMatrix(nc=nc)
-    names = {k: v for k, v in enumerate(model.names if hasattr(model, 'names') else model.module.names)}
+    names_str = opt.AVA.NAMES
+    names = {k: v for k, v in enumerate(names_str)}
     coco91class = coco80_to_coco91_class()
     s = ('%20s' + '%12s' * 6) % ('Class', 'Images', 'Labels', 'P', 'R', 'mAP@.5', 'mAP@.5:.95')
     p, r, f1, mp, mr, map50, map, t0, t1 = 0., 0., 0., 0., 0., 0., 0., 0., 0.
@@ -106,12 +107,19 @@ def test_ava(
         clips = batch['clip'].to(device, non_blocking=True)
         clips = clips.half() if half else clips.float()
         
-        video_idxs  = batch['metadata'][:, 0]
-        secs        = batch['metadata'][:, 1]
-        frame_idxs  = (secs - 900) * 30
-        paths       = testset_ava._image_paths[video_idxs][frame_idxs-1]
-        w0          = batch['metadata'][:, 2]
-        h0          = batch['metadata'][:, 3]
+        video_idxs = batch['metadata'][:, 0]
+        secs = batch['metadata'][:, 1]
+        frame_idxs = (secs - 900) * 30
+        paths = []
+        for v_idx, f_idx in zip(video_idxs, frame_idxs):
+            try:
+                path = dataloader.dataset._image_paths[v_idx.item()][f_idx.item()-1]
+            except:
+                path = dataloader.dataset.dataset._image_paths[v_idx.item()][f_idx.item()-1]
+                
+            paths.append(path)
+        w0 = batch['metadata'][:, 2].numpy()
+        h0 = batch['metadata'][:, 3].numpy()
 
         img = clips[:, :, -1, :, :] # keyframe
 
@@ -129,12 +137,12 @@ def test_ava(
             # Run model
             t = time_synchronized()
             # out, train_out = model(img, augment=augment)  # inference and training outputs
-            out_bboxs, out_clos, out_acts = model(clips, augment=augment)
+            out_bboxs, out_clos, out_acts = model(clips)
             
             out_bbox_infer, out_bbox_features = out_bboxs[0], out_bboxs[1]
             out_clo_infer, out_clo_features = out_clos[0], out_clos[1]
             out_act_infer, out_act_features = out_acts[0], out_acts[1]
-            out = torch.cat((out_bbox_infer, out_act_infer), dim=1)
+            out = torch.cat((out_bbox_infer, out_act_infer), dim=-1)
             
             
             t0 += time_synchronized() - t
@@ -162,11 +170,11 @@ def test_ava(
 
             # Predictions
             predn = pred.clone()
-            scale_coords(img[si].shape[1:], predn[:, :4], (h0, w0), (height / h0, width / w0))  # native-space pred
+            scale_coords(img[si].shape[1:], predn[:, :4], (h0[si], w0[si]))  # native-space pred
 
             # Append to text file
             if save_txt:
-                gn = torch.tensor((h0, w0))[[1, 0, 1, 0]]  # normalization gain whwh
+                gn = torch.tensor((h0[si], w0[si]))[[1, 0, 1, 0]]  # normalization gain whwh
                 for *xyxy, conf, cls in predn.tolist():
                     xywh = (xyxy2xywh(torch.tensor(xyxy).view(1, 4)) / gn).view(-1).tolist()  # normalized xywh
                     line = (cls, *xywh, conf) if save_conf else (cls, *xywh)  # label format
@@ -205,7 +213,7 @@ def test_ava(
 
                 # target boxes
                 tbox = xywh2xyxy(labels[:, 1:5])
-                scale_coords(img[si].shape[1:], tbox, (h0, w0), (height / h0, width / w0))  # native-space labels
+                scale_coords(img[si].shape[1:], tbox, (h0[si], w0[si]))  # native-space labels
                 if plots:
                     confusion_matrix.process_batch(predn, torch.cat((labels[:, 0:1], tbox), 1))
 
@@ -218,7 +226,7 @@ def test_ava(
                     if pi.shape[0]:
                         # Prediction to target ious
                         # ious, i = box_iou(predn[pi, :4], tbox[ti]).max(1) 
-                        ious, i = box_iou_only_box1(predn[pi, :4], tbox[ti], standard = 'box2').max(1)  # best ious, indices of the target boxes that have the highest IoU with each prediction.
+                        ious, i = box_iou(predn[pi, :4], tbox[ti]).max(1)  # best ious, indices of the target boxes that have the highest IoU with each prediction.
                         # Append detections
                         detected_set = set()
                         for j in (ious > iouv[0]).nonzero(as_tuple=False):
@@ -311,13 +319,13 @@ def test_ava(
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(prog='test.py')
-    parser.add_argument('--weights', type=str, default='yolov7.pt', help='model.pt path(s)')
+    parser.add_argument('--weights', type=str, default='runs/train/AVA_DF218/weights/init.pt', help='model.pt path(s)')
     parser.add_argument('--batch-size', type=int, default=1, help='size of each image batch')
     parser.add_argument('--img-size', type=int, default=224, help='inference size (pixels)')
     parser.add_argument('--conf-thres', type=float, default=0.001, help='object confidence threshold')
     parser.add_argument('--iou-thres', type=float, default=0.65, help='IOU threshold for NMS')
     parser.add_argument('--task', default='val', help='train, val, test, speed or study')
-    parser.add_argument('--device', default=0, help='cuda device, i.e. 0 or 0,1,2,3 or cpu')
+    parser.add_argument('--device', default='', help='cuda device, i.e. 0 or 0,1,2,3 or cpu')
     parser.add_argument('--single-cls', action='store_true', help='treat as single-class dataset')
     parser.add_argument('--augment', action='store_true', help='augmented inference')
     parser.add_argument('--verbose', action='store_true', help='report mAP by class')
@@ -349,6 +357,7 @@ if __name__ == '__main__':
         hyp = yaml.safe_load(f)
     
     opt = ConfigObject({})
+    opt.hyp = hyp
     opt.merge(opt_df2)
     opt.merge(opt_ava)
     opt.merge(opt_model)
@@ -359,7 +368,7 @@ if __name__ == '__main__':
     if opt.task in ('val', 'test'):  # run normally
         test_ava(opt,
              opt.weights,
-             opt.batch_size,
+             opt.batch_size_test,
              opt.img_size,
              opt.conf_thres,
              opt.iou_thres,
@@ -370,7 +379,6 @@ if __name__ == '__main__':
              save_txt=opt.save_txt | opt.save_hybrid,
              save_hybrid=opt.save_hybrid,
              save_conf=opt.save_conf,
-             trace=not opt.no_trace,
              v5_metric=opt.v5_metric
              )
 

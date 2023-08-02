@@ -81,7 +81,7 @@ def test_df2(
     # Dataloader
     if not training:
         if device.type != 'cpu':
-            model(torch.zeros(1, 3, imgsz, imgsz).to(device).type_as(next(model.parameters())))  # run once
+            model(torch.zeros(1, 3, 16, imgsz, imgsz).to(device).type_as(next(model.parameters())))  # run once
 
         testset_df2 = LoadImagesAndLabels(path=opt.val, img_size=imgsz, batch_size=opt.batch_size_test, 
                                                 augment=False, hyp=opt.hyp, rect=False, image_weights=opt.image_weights,
@@ -97,7 +97,8 @@ def test_df2(
     
     seen = 0
     confusion_matrix = ConfusionMatrix(nc=nc)
-    names = {k: v for k, v in enumerate(model.names if hasattr(model, 'names') else model.module.names)}
+    names_str = opt.names
+    names = {k: v for k, v in enumerate(names_str)}
     coco91class = coco80_to_coco91_class()
     s = ('%20s' + '%12s' * 6) % ('Class', 'Images', 'Labels', 'P', 'R', 'mAP@.5', 'mAP@.5:.95')
     p, r, f1, mp, mr, map50, map, t0, t1 = 0., 0., 0., 0., 0., 0., 0., 0., 0.
@@ -108,19 +109,19 @@ def test_df2(
         img = img.half() if half else img.float()  # uint8 to fp16/32
         img /= 255.0  # 0 - 255 to 0.0 - 1.0
         targets = targets.to(device)
-        imgs_duplicated = img.unsqueeze(2).repeat((1, 1, opt.NUM_FRAMES, 1, 1))
+        imgs_duplicated = img.unsqueeze(2).repeat((1, 1, opt.DATA.NUM_FRAMES, 1, 1))
         nb, _c, _t, height, width = imgs_duplicated.shape  # batch size, channels, T, height, width
 
         with torch.no_grad():
             # Run model
             t = time_synchronized()
             # out, train_out = model(img, augment=augment)  # inference and training outputs
-            out_bboxs, out_clos, out_acts = model(imgs_duplicated, augment=augment)
+            out_bboxs, out_clos, out_acts = model(imgs_duplicated)
             
             out_bbox_infer, out_bbox_features = out_bboxs[0], out_bboxs[1]
             out_clo_infer, out_clo_features = out_clos[0], out_clos[1]
             out_act_infer, out_act_features = out_acts[0], out_acts[1]
-            out = torch.cat((out_bbox_infer, out_clo_infer), dim=1)
+            out = torch.cat((out_bbox_infer, out_clo_infer), dim=-1)
             
             
             t0 += time_synchronized() - t
@@ -300,14 +301,13 @@ def test_df2(
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(prog='test.py')
-    parser.add_argument('--weights', type=str, default='yolov7.pt', help='model.pt path(s)')
-    parser.add_argument('--data', type=str, default='data/coco.yaml', help='*.data path')
+    parser.add_argument('--weights', type=str, default='runs/train/AVA_DF218/weights/init.pt', help='model.pt path(s)')
     parser.add_argument('--batch-size', type=int, default=1, help='size of each image batch')
     parser.add_argument('--img-size', type=int, default=224, help='inference size (pixels)')
     parser.add_argument('--conf-thres', type=float, default=0.001, help='object confidence threshold')
     parser.add_argument('--iou-thres', type=float, default=0.65, help='IOU threshold for NMS')
     parser.add_argument('--task', default='val', help='train, val, test, speed or study')
-    parser.add_argument('--device', default=0, help='cuda device, i.e. 0 or 0,1,2,3 or cpu')
+    parser.add_argument('--device', default='', help='cuda device, i.e. 0 or 0,1,2,3 or cpu')
     parser.add_argument('--single-cls', action='store_true', help='treat as single-class dataset')
     parser.add_argument('--augment', action='store_true', help='augmented inference')
     parser.add_argument('--verbose', action='store_true', help='report mAP by class')
@@ -339,6 +339,7 @@ if __name__ == '__main__':
         hyp = yaml.safe_load(f)
     
     opt = ConfigObject({})
+    opt.hyp = hyp
     opt.merge(opt_df2)
     opt.merge(opt_ava)
     opt.merge(opt_model)
@@ -349,7 +350,7 @@ if __name__ == '__main__':
     if opt.task in ('val', 'test'):  # run normally
         test_df2(opt,
              opt.weights,
-             opt.batch_size,
+             opt.batch_size_test,
              opt.img_size,
              opt.conf_thres,
              opt.iou_thres,
@@ -360,7 +361,6 @@ if __name__ == '__main__':
              save_txt=opt.save_txt | opt.save_hybrid,
              save_hybrid=opt.save_hybrid,
              save_conf=opt.save_conf,
-             trace=not opt.no_trace,
              v5_metric=opt.v5_metric
              )
 
@@ -368,7 +368,7 @@ if __name__ == '__main__':
         for w in opt.weights:
             test_df2(opt, 
                      w, 
-                     opt.batch_size, 
+                     opt.batch_size_test, 
                      opt.img_size, 
                      0.25, 
                      0.45, 
