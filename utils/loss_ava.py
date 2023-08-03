@@ -112,10 +112,10 @@ class WeightedMultiTaskLoss(nn.Module):
         combined_loss = weighted_losses.sum()
         return combined_loss
 
-class ComputeLossOTA:
+class ComputeLoss:
     # Compute losses
     def __init__(self, cfg, device='cuda:0'):
-        super(ComputeLossOTA, self).__init__()
+        super(ComputeLoss, self).__init__()
         
         # Set Config
         self.hyp = cfg.hyp
@@ -126,11 +126,7 @@ class ComputeLossOTA:
         self.ssi = 0
         self.gr = 1.0
         self.cp, self.cn = 0.95, 0.05 # Smooth BCE
-        self.anchors = torch.tensor([
-                        [[1.50000, 2.00000], [2.37500, 4.50000], [5.00000, 3.50000]],
-                        [[2.25000, 4.68750], [4.75000, 3.43750], [4.50000, 9.12500]],
-                        [[4.43750, 3.43750], [6.00000, 7.59375], [14.34375, 12.53125]]
-                    ], device='cuda:0')
+        self.anchors = torch.Tensor(cfg.MODEL.ANCHORS).view(3,3,2).to(device)
 
         # Define criteria
         # 1. cls loss
@@ -219,7 +215,7 @@ class ComputeLossOTA:
         bs = tobj.shape[0]  # batch size
 
         loss = lbox + lobj + lcls
-        return loss * bs, torch.cat((lbox, lobj, lcls, loss)).detach()
+        return loss * bs, torch.cat((lbox, lobj, lcls, loss))
 
     def build_targets(self, p, targets):
         # Build targets for compute_loss(), input targets(image,class,x,y,w,h)
@@ -275,78 +271,3 @@ class ComputeLossOTA:
             tcls.append(c)  # class
 
         return tcls, tbox, indices, anch
-
-
-
-if __name__ == '__main__':
-    pred_boxes = torch.randn((2352,4), dtype=torch.float32)
-    array = np.zeros((1, 50, 80), dtype=np.float32)
-    for i in range(6):
-        one_hot_encoding = np.zeros(80, dtype=np.float32)
-        one_hot_encoding[i] = 1.0
-        array[:, i, :] = one_hot_encoding
-    
-    target = {
-    'cls': torch.Tensor(array),
-    'boxes': torch.Tensor(np.array([[
-        [       0.18,       0.481,       0.206,        0.66],
-        [      0.296,      0.2645,        0.14,       0.465],
-        [     0.4065,      0.5425,       0.149,       0.697],
-        [      0.579,      0.4425,       0.148,       0.675],
-        [     0.7155,       0.482,       0.179,       0.672],
-        [    0.90027,     0.60877,     0.19054,     0.77354],
-        [          0,           0,           0,           0],
-        [          0,           0,           0,           0],
-        [          0,           0,           0,           0],
-        [          0,           0,           0,           0],
-        [          0,           0,           0,           0],
-        [          0,           0,           0,           0],
-        [          0,           0,           0,           0],
-        [          0,           0,           0,           0],
-        [          0,           0,           0,           0],
-        [          0,           0,           0,           0],
-        [          0,           0,           0,           0],
-        [          0,           0,           0,           0],
-        [          0,           0,           0,           0],
-        [          0,           0,           0,           0],
-        [          0,           0,           0,           0],
-        [          0,           0,           0,           0],
-        [          0,           0,           0,           0],
-        [          0,           0,           0,           0],
-        [          0,           0,           0,           0],
-        [          0,           0,           0,           0],
-        [          0,           0,           0,           0],
-        [          0,           0,           0,           0],
-        [          0,           0,           0,           0],
-        [          0,           0,           0,           0],
-        [          0,           0,           0,           0],
-        [          0,           0,           0,           0],
-        [          0,           0,           0,           0],
-        [          0,           0,           0,           0],
-        [          0,           0,           0,           0],
-        [          0,           0,           0,           0],
-        [          0,           0,           0,           0],
-        [          0,           0,           0,           0],
-        [          0,           0,           0,           0],
-        [          0,           0,           0,           0],
-        [          0,           0,           0,           0],
-        [          0,           0,           0,           0],
-        [          0,           0,           0,           0],
-        [          0,           0,           0,           0],
-        [          0,           0,           0,           0],
-        [          0,           0,           0,           0],
-        [          0,           0,           0,           0],
-        [          0,           0,           0,           0],
-        [          0,           0,           0,           0],
-        [          0,           0,           0,           0]]], dtype=np.float32))}
-    anchors = [1.28967, 4.15014, 2.12714, 5.09344, 3.27212, 5.87423]
-    num_anchors = 3
-    num_classes = 80
-    object_scale = 5
-    nH = 28
-    nW = 28
-    noobject_scale = 1
-    sil_thresh = 0.6
-    
-    # ret = build_targets_Ava(pred_boxes, target, anchors, num_anchors, num_classes, nH, nW, noobject_scale, object_scale, sil_thresh)
-    # print(ret)

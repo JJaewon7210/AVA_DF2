@@ -29,7 +29,7 @@ from utils.scheduler import CosineAnnealingWarmupRestarts
 from utils.torch_utils import ModelEMA, select_device, intersect_dicts, torch_distributed_zero_first, is_parallel
 from utils.plots import plot_images, plot_labels, plot_results, plot_evolution
 
-from utils.loss_ava import ComputeLossOTA,  WeightedMultiTaskLoss
+from utils.loss_ava import ComputeLoss,  WeightedMultiTaskLoss
 from datasets.ava_dataset import AvaWithPseudoLabel, Ava
 from datasets.yolo_datasets import DeepFasion2WithPseudoLabel, LoadImagesAndLabels, InfiniteDataLoader
 from datasets.combined_dataset import CombinedDataset
@@ -147,11 +147,11 @@ def main(hyp, opt, device, tb_writer):
     # Start training ----------------------------------------------------------------------------------------------------
     scheduler.last_epoch = start_epoch - 1  # do not move
     torch.save(model, wdir / 'init.pt')
-    scaler = amp.GradScaler(enabled=False)
+    scaler = amp.GradScaler(enabled=cuda)
     logger.info(f'Using {dataloader.num_workers} dataloader workers\n'
                 f'Logging results to {save_dir}\n'
                 f'Starting training for {epochs} epochs...')
-    AVA_L = ComputeLossOTA(cfg=opt)
+    AVA_L = ComputeLoss(cfg=opt)
     LOSS = WeightedMultiTaskLoss(num_tasks=4)
     
     # Start epoch ------------------------------------------------------------------------------------------------------
@@ -198,7 +198,7 @@ def main(hyp, opt, device, tb_writer):
             model_input = torch.cat([imgs_duplicated, clips], dim=0)
             
             # Batch-02. Forward
-            with amp.autocast(enabled=False):
+            with amp.autocast(enabled=cuda):
                 out_bboxs, out_clos, out_acts = model(model_input)
                 
                 out_bbox_infer, out_bbox_features = out_bboxs[0], out_bboxs[1]
