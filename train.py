@@ -153,20 +153,21 @@ def main(hyp, opt, device, tb_writer):
                 f'Starting training for {epochs} epochs...')
     AVA_L = ComputeLoss(cfg=opt)
     LOSS = WeightedMultiTaskLoss(num_tasks=4)
+    accumulation_steps = 4
     
     # Start epoch ------------------------------------------------------------------------------------------------------
     for epoch in range(start_epoch, epochs):  
+        logger.info(('\n' + '%10s' * 7) % ('gpu_mem', 'box', 'obj', 'act', 'clo', 'total', 'lr'))
         model.train()
         optimizer.zero_grad()
         pbar = enumerate(dataloader)
         pbar = tqdm(pbar, total=num_batch)  # progress bar
-        logger.info(('\n' + '%10s' * 7) % ('gpu_mem', 'box', 'obj', 'act', 'clo', 'total', 'lr'))
-        mloss = torch.zeros(4, device=device)  # mean losses
-        mtotal_loss = torch.zeros(1, device=device) # mean total_loss (sum of losses)
+        mloss = torch.zeros(4, device='cpu')  # mean losses
+        mtotal_loss = torch.zeros(1, device='cpu') # mean total_loss (sum of losses)
         
         # Start batch ----------------------------------------------------------------------------------------------------
         for i, (item1, item2) in pbar:
-            
+            optimizer.zero_grad()
             # Batch-01. Input data
             imgs, labels, paths, _shapes, features = item1
             imgs = imgs.to(device, non_blocking=True).float() / 255.0  # uint8 to float32, 0-255 to 0.0-1.0
@@ -215,22 +216,25 @@ def main(hyp, opt, device, tb_writer):
                 lbox, lobj, lact, loss = torch.split(losses, 1)
                 _sum, losses = AVA_L.forward_df2(p_cls=out_clo_DF2, p_bbox=out_bbox_DF2, targets=labels)
                 _lbox, _lobj, lclo, loss = torch.split(losses, 1)
-                total_loss = LOSS([lbox, lobj, lact, lclo])
+                total_loss = LOSS([lbox, lobj, lact, lclo]) / accumulation_steps
                 
                 
             # Batch-03. Backward
             scaler.scale(total_loss).backward()
-            scaler.step(optimizer)  # optimizer.step
-            scaler.update()
-            optimizer.zero_grad()
-            scheduler.step()
+            
+            if (i+1) % accumulation_steps == 0:
+                scaler.step(optimizer)
+                scaler.update()
+                scheduler.step()
+                optimizer.zero_grad()
+
 
             # Batch-04. Print
-            loss_item = torch.tensor([lbox, lobj, lact, lclo],device=device)
+            loss_item = torch.tensor([lbox, lobj, lact, lclo], device='cpu')
             
             if torch.all(torch.isfinite(loss_item)):
                 mloss = (mloss * i + loss_item) / (i + 1)  # update mean losses
-                mtotal_loss = (mtotal_loss * i + total_loss) / (i+1) # update mean total_loss
+                mtotal_loss = (mtotal_loss * i + total_loss.detach().cpu()) / (i+1) # update mean total_loss
                 
             gpu_memory_usage_gb = '%.3gG' % (torch.cuda.memory_reserved() / 1E9 if torch.cuda.is_available() else 0)
             lr = [x['lr'] for x in optimizer.param_groups]
@@ -244,12 +248,12 @@ def main(hyp, opt, device, tb_writer):
             
             cur_step = epoch * num_batch + i
             if (cur_step % opt.log_step) == 0:
-                tags = ['train/box_loss', 'train/obj_loss', 'train/act_loss', 'train/clo_loss', 'lr']
-                for x, tag in zip(list(mloss[:-1]) + lr, tags):
+                tags = ['train/box_loss', 'train/obj_loss', 'train/act_loss', 'train/clo_loss', 'train/lr']
+                for x, tag in zip(list(mloss) + lr, tags):
                     wandb_logger.log({tag: x})
                     
             # Batch-05. Plot
-            if plots and i < 10:
+            if plots and i < 5:
                 f_clo = save_dir / f'train_batch_clo{i}.jpg'  # filename
                 f_act = save_dir / f'train_batch_act{i}.jpg'  # filename
                 
@@ -263,7 +267,7 @@ def main(hyp, opt, device, tb_writer):
                 Thread(target=plot_images, args=(model_input[:, :, -1, :, :], preds_clo, None, f_clo), daemon=True).start()
                 Thread(target=plot_images, args=(model_input[:, :, -1, :, :], preds_act, None, f_act), daemon=True).start()
                 
-            elif plots and i == 10 and wandb_logger.wandb:
+            elif plots and i == 5 and wandb_logger.wandb:
                 wandb_logger.log({"Mosaics": [wandb_logger.wandb.Image(str(x), caption=x.name) for x in
                                                 save_dir.glob('train*.jpg') if x.exists()]})
 
