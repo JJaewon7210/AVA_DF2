@@ -258,10 +258,10 @@ def main(hyp, opt, device, tb_writer):
                 f_act = save_dir / f'train_batch_act{i}.jpg'  # filename
                 
                 preds_clo = torch.cat((out_bbox_infer, out_clo_infer), dim=2)
-                preds_clo = non_max_suppression(preds_clo, conf_thres=0.75, iou_thres=0.75)
+                preds_clo = non_max_suppression(preds_clo, conf_thres=0.5, iou_thres=0.5)
                 preds_clo = torch.cat(preds_clo, dim=0)
                 preds_act = torch.cat((out_bbox_infer, out_act_infer), dim=2)
-                preds_act = non_max_suppression(preds_act, conf_thres=0.75, iou_thres=0.75)
+                preds_act = non_max_suppression(preds_act, conf_thres=0.5, iou_thres=0.5)
                 preds_act = torch.cat(preds_act, dim=0)
                 
                 Thread(target=plot_images, args=(model_input[:, :, -1, :, :], preds_clo, None, f_clo), daemon=True).start()
