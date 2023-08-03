@@ -120,13 +120,12 @@ class ComputeLoss:
         # Set Config
         self.hyp = cfg.hyp
         self.nc = None
-        self.na = 3 # number of anchors
-        self.stride = torch.tensor([8., 16., 32.])
-        self.nl = 3 # number of detection layers (small, medium, large) =3
+        self.na = len(cfg.MODEL.ANCHORS[0]) // 2 # number of anchors
+        self.nl = len(cfg.MODEL.ANCHORS) # number of layers
         self.ssi = 0
         self.gr = 1.0
         self.cp, self.cn = 0.95, 0.05 # Smooth BCE
-        self.anchors = torch.Tensor(cfg.MODEL.ANCHORS).view(3,3,2).to(device)
+        self.anchors = torch.Tensor(cfg.MODEL.ANCHORS).view(self.nl, self.na, 2).to(device)
 
         # Define criteria
         # 1. cls loss

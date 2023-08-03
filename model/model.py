@@ -18,7 +18,8 @@ class Detect(nn.Module):
         self.no = no  # number of outputs per anchor
         self.nl = len(anchors)  # number of detection layers
         self.na = len(anchors[0]) // 2  # number of anchors
-        self.stride = torch.tensor([8,16,32]).float()
+        stride = self.stride = {3: [8, 16, 32], 2: [16, 32], 1: [32]}.get(self.nl, "Unsupported value for self.nl. It must be 1, 2, or 3.")
+        self.stride = torch.tensor(stride).float()
         self.grid = [torch.zeros(1)] * self.nl  # init grid
         a = torch.tensor(anchors).float().view(self.nl, -1, 2)
         self.register_buffer('anchors', a)  # shape(nl,na,2)
@@ -92,15 +93,15 @@ class MTA_F3D_MODEL(nn.Module):
         self.BiFPN_2d = BiFPN(num_ch_2d, BiFPN_fsize)
         
         # Neck (2D + 3D)
-        time_p3 = max(int(self.num_frames / 4), 1)
-        self.conv3D_p3 = nn.Conv3d(num_ch_3d[2], num_ch_3d[2], kernel_size=(time_p3, 1, 1), stride=(time_p3, 1, 1), padding=(0, 0, 0))
-        time_p4 = max(int(self.num_frames / 8), 1)
-        self.conv3D_p4 = nn.Conv3d(num_ch_3d[3], num_ch_3d[3], kernel_size=(time_p4, 1, 1), stride=(time_p4, 1, 1), padding=(0, 0, 0))
+        # time_p3 = max(int(self.num_frames / 4), 1)
+        # self.conv3D_p3 = nn.Conv3d(num_ch_3d[2], num_ch_3d[2], kernel_size=(time_p3, 1, 1), stride=(time_p3, 1, 1), padding=(0, 0, 0))
+        # time_p4 = max(int(self.num_frames / 8), 1)
+        # self.conv3D_p4 = nn.Conv3d(num_ch_3d[3], num_ch_3d[3], kernel_size=(time_p4, 1, 1), stride=(time_p4, 1, 1), padding=(0, 0, 0))
         time_p5 = max(int(self.num_frames / 16), 1)
         self.conv3D_p5 = nn.Conv3d(num_ch_3d[4], num_ch_3d[4], kernel_size=(time_p5, 1, 1), stride=(time_p5, 1, 1), padding=(0, 0, 0))
         
-        self.cfam_p3 = CFAMBlock(BiFPN_fsize+num_ch_3d[2], 256)
-        self.cfam_p4 = CFAMBlock(BiFPN_fsize+num_ch_3d[3], 512)
+        # self.cfam_p3 = CFAMBlock(BiFPN_fsize+num_ch_3d[2], 256)
+        # self.cfam_p4 = CFAMBlock(BiFPN_fsize+num_ch_3d[3], 512)
         self.cfam_p5 = CFAMBlock(BiFPN_fsize+num_ch_3d[4], 1024)
         
         # Head
@@ -112,7 +113,8 @@ class MTA_F3D_MODEL(nn.Module):
                                 ch = [BiFPN_fsize]*len(cfg.MODEL.ANCHORS))
         self.head_act = Detect(no = cfg.MODEL.NUM_CLASSES,
                                 anchors = cfg.MODEL.ANCHORS,
-                                ch = [256,512,1024])
+                                # ch = [256,512,1024])
+                                ch = [1024 // 2**(i) for i in reversed(range(len(cfg.MODEL.ANCHORS)))])
         
     def forward(self, x):
         
@@ -126,50 +128,51 @@ class MTA_F3D_MODEL(nn.Module):
         
         # Neck
         fs_2d = self.BiFPN_2d(fs_2d)
-        x_2d_p3 = fs_2d[2]
-        x_2d_p4 = fs_2d[3]
+        # x_2d_p3 = fs_2d[2]
+        # x_2d_p4 = fs_2d[3]
         x_2d_p5 = fs_2d[4]
         
-        x_3d_p3 = self.conv3D_p3(fs_3d[2])
-        x_3d_p3 = torch.squeeze(x_3d_p3, dim=2)
-        x_3d_p4 = self.conv3D_p4(fs_3d[3])
-        x_3d_p4 = torch.squeeze(x_3d_p4, dim=2)
+        # x_3d_p3 = self.conv3D_p3(fs_3d[2])
+        # x_3d_p3 = torch.squeeze(x_3d_p3, dim=2)
+        # x_3d_p4 = self.conv3D_p4(fs_3d[3])
+        # x_3d_p4 = torch.squeeze(x_3d_p4, dim=2)
         x_3d_p5 = self.conv3D_p5(fs_3d[4])
         x_3d_p5 = torch.squeeze(x_3d_p5, dim=2)
         
-        x_p3 = torch.cat((x_3d_p3, x_2d_p3), dim=1)
-        x_p3 = self.cfam_p3(x_p3)
-        x_p4 = torch.cat((x_3d_p4, x_2d_p4), dim=1)
-        x_p4 = self.cfam_p4(x_p4)
+        # x_p3 = torch.cat((x_3d_p3, x_2d_p3), dim=1)
+        # x_p3 = self.cfam_p3(x_p3)
+        # x_p4 = torch.cat((x_3d_p4, x_2d_p4), dim=1)
+        # x_p4 = self.cfam_p4(x_p4)
         x_p5 = torch.cat((x_3d_p5, x_2d_p5), dim=1)
         x_p5 = self.cfam_p5(x_p5)
         
         # Head
-        out_bboxs = self.head_bbox([x_2d_p3, x_2d_p4, x_2d_p5])
-        out_clos = self.head_clo([x_2d_p3, x_2d_p4, x_2d_p5])
-        out_acts = self.head_act([x_p3, x_p4, x_p5])
+        # out_bboxs = self.head_bbox([x_2d_p3, x_2d_p4, x_2d_p5])
+        # out_clos = self.head_clo([x_2d_p3, x_2d_p4, x_2d_p5])
+        # out_acts = self.head_act([x_p3, x_p4, x_p5])
+        out_bboxs = self.head_bbox([x_2d_p5])
+        out_clos = self.head_clo([x_2d_p5])
+        out_acts = self.head_act([x_p5])
         
         '''
         out_bboxs
         - out_bboxs[0]: inference, shape of [3087, 5]
         - out_bboxs[1]: features
-            - out_bboxs[1][0] has the shape of [B, na, 28, 28, 5]
-            - out_bboxs[1][1] has the shape of [B, na, 14, 14, 5]
-            - out_bboxs[1][2] has the shape of [B, na, 7, 7, 5]
+            - out_bboxs[1][0] has the shape of [B, na, 7, 7, 5]
+
             
         out_clos
         - out_clos[0]: inference, shape of [3087, 13]
         - out_clos[1]: features
-            - out_clos[1][0] has the shape of [B, na, 28, 28, 13]
-            - out_clos[1][1] has the shape of [B, na, 14, 14, 13]
-            - out_clos[1][2] has the shape of [B, na, 7, 7, 13]
+            - out_clos[1][0] has the shape of [B, na, 7, 7, 13]
+
             
         out_acts
         - out_acts[0]: inference, shape of [3087, 80]
         - out_acts[1]: features
-            - out_acts[1][0] has the shape of [B, na, 28, 28, 80]
-            - out_acts[1][1] has the shape of [B, na, 14, 14, 80]
-            - out_acts[1][2] has the shape of [B, na, 7, 7, 80]
+            - out_acts[1][0] has the shape of [B, na, 7, 7, 80]
+            - when model is training mode, it outcomes the half of batch size [B//2, na, 7, 7, 80]
+
         '''
         
         return out_bboxs, out_clos, out_acts
