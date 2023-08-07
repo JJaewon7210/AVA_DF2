@@ -18,6 +18,7 @@ import numpy as np
 from torch.cuda import amp
 import torch.optim as optim
 from tqdm import tqdm
+from timm.optim import create_optimizer_v2
 
 # Local application/library specific imports
 from model.model import MTA_F3D_MODEL as Model
@@ -117,10 +118,11 @@ def main(hyp, opt, device, tb_writer):
     else:
         logger.info('\n====> No test section during training model.')
         
-    # 7. Optimizer, LR scheduler 
-    optimizer = optim.Adam(model.parameters(), lr=hyp['lr0'], weight_decay=hyp['weight_decay'] )
+    optimizer = create_optimizer_v2(model.parameters(), opt='adam', lr=hyp['lr0'], momentum=hyp['momentum'], weight_decay=hyp['weight_decay'])
     scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=hyp['lrmax'], epochs = epochs, steps_per_epoch=num_batch)
 
+    # EMA
+    ema = ModelEMA(model)
 
     # 8. Resume
     start_epoch, best_fitness = 0, 1e+9
@@ -129,6 +131,10 @@ def main(hyp, opt, device, tb_writer):
         if ckpt['optimizer'] is not None:
             optimizer.load_state_dict(ckpt['optimizer'])
             best_fitness = ckpt['best_fitness']
+        # EMA
+        if ema and ckpt.get('ema'):
+            ema.ema.load_state_dict(ckpt['ema'].float().state_dict())
+            ema.updates = ckpt['updates']
         # Results
         if ckpt.get('training_results') is not None:
             results_file.write_text(ckpt['training_results'])  # write results.txt
@@ -227,7 +233,7 @@ def main(hyp, opt, device, tb_writer):
                 scaler.update()
                 scheduler.step()
                 optimizer.zero_grad()
-
+                if ema: ema.update(model)
 
             # Batch-04. Print
             loss_item = torch.tensor([lbox, lobj, lact, lclo], device='cpu')
@@ -253,19 +259,20 @@ def main(hyp, opt, device, tb_writer):
                     wandb_logger.log({tag: x})
                     
             # Batch-05. Plot
-            if plots and i < 5:
-                f_clo = save_dir / f'train_batch_clo{i}.jpg'  # filename
-                f_act = save_dir / f'train_batch_act{i}.jpg'  # filename
+            if (plots) and (cur_step % opt.log_step == 0):
+                plot_i = (cur_step // opt.log_step) % 5
+                f_clo = save_dir / f'train_batch_clo{plot_i}.jpg'  # filename
+                f_act = save_dir / f'train_batch_act{plot_i}.jpg'  # filename
                 
                 preds_clo = torch.cat((out_bbox_infer, out_clo_infer), dim=2)
-                preds_clo = non_max_suppression(preds_clo, conf_thres=0.5, iou_thres=0.5)
+                preds_clo = non_max_suppression(preds_clo)
                 preds_clo = torch.cat(preds_clo, dim=0)
                 preds_act = torch.cat((out_bbox_infer, out_act_infer), dim=2)
-                preds_act = non_max_suppression(preds_act, conf_thres=0.5, iou_thres=0.5)
+                preds_act = non_max_suppression(preds_act)
                 preds_act = torch.cat(preds_act, dim=0)
                 
-                Thread(target=plot_images, args=(model_input[:, :, -1, :, :], preds_clo, None, f_clo), daemon=True).start()
-                Thread(target=plot_images, args=(model_input[:, :, -1, :, :], preds_act, None, f_act), daemon=True).start()
+                Thread(target=plot_images, args=(model_input[:, :, -1, :, :].detach(), preds_clo.detach(), None, f_clo), daemon=True).start()
+                Thread(target=plot_images, args=(model_input[:, :, -1, :, :].detach(), preds_act.detach(), None, f_act), daemon=True).start()
                 
             elif plots and i == 5 and wandb_logger.wandb:
                 wandb_logger.log({"Mosaics": [wandb_logger.wandb.Image(str(x), caption=x.name) for x in
@@ -276,6 +283,7 @@ def main(hyp, opt, device, tb_writer):
         # End epoch --------------------------------------------------------------------------------------------------------
     
         # Start write ------------------------------------------------------------------------------------------------------
+        ema.update_attr(model, include=['yaml', 'nc', 'hyp', 'gr', 'names', 'stride', 'class_weights'])
         final_epoch = epoch + 1 == epochs
         wandb_logger.current_epoch = epoch + 1
         
@@ -283,7 +291,7 @@ def main(hyp, opt, device, tb_writer):
             results_ava, maps_ava, times_ava = test_ava(opt,
                                         batch_size=opt.batch_size_test,
                                         imgsz=imgsz_test,
-                                        model=model,
+                                        model=ema.ema,
                                         single_cls=opt.single_cls,
                                         dataloader=testloader_ava,
                                         save_dir=save_dir,
@@ -297,7 +305,7 @@ def main(hyp, opt, device, tb_writer):
             results_df2, maps_df2, times_df2 = test_df2(opt,
                                         batch_size=opt.batch_size_test,
                                         imgsz=imgsz_test,
-                                        model=model,
+                                        model=ema.ema,
                                         single_cls=opt.single_cls,
                                         dataloader=testloader_df2,
                                         save_dir=save_dir,
@@ -345,6 +353,8 @@ def main(hyp, opt, device, tb_writer):
                     'best_fitness': best_fitness,
                     'training_results': results_file.read_text(),
                     'model': deepcopy(model.module if is_parallel(model) else model).half(),
+                    'ema': deepcopy(ema.ema).half(),
+                    'updates': ema.updates,
                     'optimizer': optimizer.state_dict(),
                     'wandb_id': wandb_logger.wandb_run.id if wandb_logger.wandb else None}
 
