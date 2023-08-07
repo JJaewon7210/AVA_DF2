@@ -117,7 +117,7 @@ def plot_images(images, targets, paths=None, fname='images.jpg', names=None, max
     if isinstance(images, torch.Tensor):
         images = images.cpu().float().numpy()
     if isinstance(targets, torch.Tensor):
-        targets = targets.cpu().numpy()
+        targets = targets.cpu().detach().numpy()
 
     # un-normalise
     if np.max(images[0]) <= 1:

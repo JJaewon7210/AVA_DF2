@@ -62,7 +62,9 @@ def test_df2(
         
         if trace:
             model = TracedModel(model, device, imgsz)
-
+    # Load model
+    if type(model) == dict:
+        model = model['ema']
     # Half
     half = device.type != 'cpu' and half_precision  # half precision only supported on CUDA
     if half:

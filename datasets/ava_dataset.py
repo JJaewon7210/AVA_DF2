@@ -160,6 +160,7 @@ class Ava(torch.utils.data.Dataset):
             # boxes = cv2_transform.box_augmentation(boxes)
             # boxes = cv2_transform.resize_boxes(self._crop_size, boxes, imgs[0].shape[0], imgs[0].shape[1])
             # imgs = [cv2_transform.resize(self._crop_size, img) for img in imgs]
+            ''' my transform '''
             imgs = [cv2_transform.resize(self._crop_size, img) for img in imgs]
             boxes = cv2_transform.resize_boxes(self._crop_size, boxes, height, width)
 
