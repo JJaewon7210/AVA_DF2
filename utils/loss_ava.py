@@ -155,7 +155,9 @@ class ComputeLoss:
         self.ssi = 0 
         self.gr = 0 # iou loss ratio (obj_loss = 1.0 or iou)
         self.cp, self.cn = 0.95, 0.05 # Smooth BCE
-        self.anchors = torch.Tensor(cfg.MODEL.ANCHORS).view(self.nl, self.na, 2).to(device)
+        stride = {3: [8, 16, 32], 2: [16, 32], 1: [32]}.get(self.nl, "Unsupported value for self.nl. It must be 1, 2, or 3.")
+        anchors_grid = torch.Tensor(cfg.MODEL.ANCHORS).view(self.nl, self.na, 2).to(device)
+        self.anchors = anchors_grid / torch.tensor(stride, device=device).view(-1, 1, 1)
 
         # Define criteria
         # 1. cls loss
@@ -262,9 +264,9 @@ class ComputeLoss:
 
         for i in range(self.nl):
             anchors = self.anchors[i]
-            # gain[2:6] = torch.tensor(p[i].shape)[[3, 2, 3, 2]]  # xyxy gain
-            gain[2:4] = torch.tensor(p[i].shape)[[3, 2]]  # xy gain
-            gain[4:6] = torch.tensor([self.image_size, self.image_size]) # wh gain
+            gain[2:6] = torch.tensor(p[i].shape)[[3, 2, 3, 2]]  # xyxy gain
+            # gain[2:4] = torch.tensor(p[i].shape)[[3, 2]]  # xy gain
+            # gain[4:6] = torch.tensor([self.image_size, self.image_size]) # wh gain
             
             # Match targets to anchors
             t = targets * gain
