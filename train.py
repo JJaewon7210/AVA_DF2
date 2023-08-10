@@ -119,7 +119,7 @@ def main(hyp, opt, device, tb_writer):
         logger.info('\n====> No test section during training model.')
         
     optimizer = create_optimizer_v2(model.parameters(), opt='adam', lr=hyp['lr0'], momentum=hyp['momentum'], weight_decay=hyp['weight_decay'])
-    scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=hyp['lrmax'], epochs = epochs, steps_per_epoch=num_batch, div_factor=hyp['lr0']/hyp['lrmax'])
+    scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=hyp['lrmax'], epochs = epochs, steps_per_epoch=num_batch, div_factor=hyp['lrmax']/hyp['lr0'])
 
     # EMA
     ema = ModelEMA(model)
@@ -264,15 +264,39 @@ def main(hyp, opt, device, tb_writer):
                 f_clo = save_dir / f'train_batch_clo{plot_i}.jpg'  # filename
                 f_act = save_dir / f'train_batch_act{plot_i}.jpg'  # filename
                 
-                preds_clo = torch.cat((out_bbox_infer, out_clo_infer), dim=2)
+                preds_clo = torch.cat((out_bbox_infer[:batch_size, ...], out_clo_infer[:batch_size, ...]), dim=2)
                 preds_clo = non_max_suppression(preds_clo)
-                preds_clo = torch.cat(preds_clo, dim=0)
-                preds_act = torch.cat((out_bbox_infer, out_act_infer), dim=2)
-                preds_act = non_max_suppression(preds_act)
-                preds_act = torch.cat(preds_act, dim=0)
                 
-                Thread(target=plot_images, args=(model_input[:, :, -1, :, :].detach(), preds_clo.detach(), None, f_clo), daemon=True).start()
-                Thread(target=plot_images, args=(model_input[:, :, -1, :, :].detach(), preds_act.detach(), None, f_act), daemon=True).start()
+                new_tensors = []
+                for batch_idx, tensor in enumerate(preds_clo):
+                    if tensor.nelement() != 0:  # Check if tensor is not empty
+                        # Create a tensor for the batch_idx which has the same shape as tensor's 0th dimension
+                        batch_idx_tensor = torch.full((tensor.shape[0], 1), batch_idx, device=preds_clo[0].device)
+                        # Concatenate batch_idx_tensor with the original tensor along dimension 1
+                        modified_tensor = torch.cat([batch_idx_tensor, tensor], dim=1)
+                        new_tensors.append(modified_tensor)
+                if new_tensors:
+                    preds_clo_new = torch.cat(new_tensors, dim=0).detach()
+                else:
+                    preds_clo_new = torch.cat(preds_clo, dim=0).detach()
+                
+                preds_act = torch.cat((out_bbox_infer[-batch_size:, ...], out_act_infer[-batch_size:, ...]), dim=2)
+                preds_act = non_max_suppression(preds_act)
+                new_tensors = []
+                for batch_idx, tensor in enumerate(preds_act):
+                    if tensor.nelement() != 0:  # Check if tensor is not empty
+                        # Create a tensor for the batch_idx which has the same shape as tensor's 0th dimension
+                        batch_idx_tensor = torch.full((tensor.shape[0], 1), batch_idx, device=preds_act[0].device)
+                        # Concatenate batch_idx_tensor with the original tensor along dimension 1
+                        modified_tensor = torch.cat([batch_idx_tensor, tensor], dim=1)
+                        new_tensors.append(modified_tensor)
+                if new_tensors:
+                    preds_act_new = torch.cat(new_tensors, dim=0).detach()
+                else:
+                    preds_act_new = torch.cat(preds_act, dim=0).detach()
+                
+                Thread(target=plot_images, args=(model_input[:batch_size, :, -1, :, :], preds_clo_new, None, f_clo), daemon=True).start()
+                Thread(target=plot_images, args=(model_input[-batch_size:, :, -1, :, :], preds_act_new, None, f_act), daemon=True).start()
                 
             elif plots and i == 5 and wandb_logger.wandb:
                 wandb_logger.log({"Mosaics": [wandb_logger.wandb.Image(str(x), caption=x.name) for x in

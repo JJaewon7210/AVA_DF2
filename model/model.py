@@ -13,12 +13,13 @@ from model.cfam import CFAMBlock
 # Detection Head
 class Detect(nn.Module):
     
-    def __init__(self, no=80, anchors=(), ch=()):  # detection layer
+    def __init__(self, no=80, anchors=(), ch=(), bbox_head=False):  # detection layer
         super(Detect, self).__init__()
+        self.bbox_head = bbox_head # adjust the x, y, w, h for the first 4 channel of detection output
         self.no = no  # number of outputs per anchor
         self.nl = len(anchors)  # number of detection layers
         self.na = len(anchors[0]) // 2  # number of anchors
-        stride = self.stride = {3: [8, 16, 32], 2: [16, 32], 1: [32]}.get(self.nl, "Unsupported value for self.nl. It must be 1, 2, or 3.")
+        stride = {3: [8, 16, 32], 2: [16, 32], 1: [32]}.get(self.nl, "Unsupported value for self.nl. It must be 1, 2, or 3.")
         self.stride = torch.tensor(stride).float()
         self.grid = [torch.zeros(1)] * self.nl  # init grid
         a = torch.tensor(anchors).float().view(self.nl, -1, 2)
@@ -38,8 +39,9 @@ class Detect(nn.Module):
             if self.grid[i].shape[2:4] != x[i].shape[2:4]:
                 self.grid[i] = self._make_grid(nx, ny).to(x[i].device)
             y = x[i].sigmoid()
-            y[..., 0:2] = (y[..., 0:2] * 2. - 0.5 + self.grid[i]) * self.stride[i]  # xy
-            y[..., 2:4] = (y[..., 2:4] * 2) ** 2 * self.anchor_grid[i]  # wh
+            if self.bbox_head:
+                y[..., 0:2] = (y[..., 0:2] * 2. - 0.5 + self.grid[i]) * self.stride[i]  # xy
+                y[..., 2:4] = (y[..., 2:4] * 2) ** 2 * self.anchor_grid[i]  # wh
             z.append(y.view(bs, -1, self.no))
 
         out = (torch.cat(z, 1), x)
@@ -107,14 +109,17 @@ class MTA_F3D_MODEL(nn.Module):
         # Head
         self.head_bbox = Detect(no = 4+1,
                                 anchors = cfg.MODEL.ANCHORS,
-                                ch = [BiFPN_fsize]*len(cfg.MODEL.ANCHORS))
+                                ch = [BiFPN_fsize]*len(cfg.MODEL.ANCHORS),
+                                bbox_head=True)
         self.head_clo = Detect(no = cfg.nc,
                                 anchors = cfg.MODEL.ANCHORS,
-                                ch = [BiFPN_fsize]*len(cfg.MODEL.ANCHORS))
+                                ch = [BiFPN_fsize]*len(cfg.MODEL.ANCHORS),
+                                bbox_head=False)
         self.head_act = Detect(no = cfg.MODEL.NUM_CLASSES,
                                 anchors = cfg.MODEL.ANCHORS,
                                 # ch = [256,512,1024])
-                                ch = [1024 // 2**(i) for i in reversed(range(len(cfg.MODEL.ANCHORS)))])
+                                ch = [1024 // 2**(i) for i in reversed(range(len(cfg.MODEL.ANCHORS)))],
+                                bbox_head=False)
         
     def forward(self, x):
         
