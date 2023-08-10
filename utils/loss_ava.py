@@ -90,6 +90,35 @@ def convert_one_hot_to_batch_class(A):
 def convert2cpu(gpu_matrix):
     return torch.FloatTensor(gpu_matrix.size()).copy_(gpu_matrix)
 
+class FocalLoss(nn.Module):
+    # Wraps focal loss around existing loss_fcn(), i.e. criteria = FocalLoss(nn.BCEWithLogitsLoss(), gamma=1.5)
+    def __init__(self, loss_fcn, gamma=1.5, alpha=0.25):
+        super(FocalLoss, self).__init__()
+        self.loss_fcn = loss_fcn  # must be nn.BCEWithLogitsLoss()
+        self.gamma = gamma
+        self.alpha = alpha
+        self.reduction = loss_fcn.reduction
+        self.loss_fcn.reduction = 'none'  # required to apply FL to each element
+
+    def forward(self, pred, true):
+        loss = self.loss_fcn(pred, true)
+        # p_t = torch.exp(-loss)
+        # loss *= self.alpha * (1.000001 - p_t) ** self.gamma  # non-zero power for gradient stability
+
+        # TF implementation https://github.com/tensorflow/addons/blob/v0.7.1/tensorflow_addons/losses/focal_loss.py
+        pred_prob = torch.sigmoid(pred)  # prob from logits
+        p_t = true * pred_prob + (1 - true) * (1 - pred_prob)
+        alpha_factor = true * self.alpha + (1 - true) * (1 - self.alpha)
+        modulating_factor = (1.0 - p_t) ** self.gamma
+        loss *= alpha_factor * modulating_factor
+
+        if self.reduction == 'mean':
+            return loss.mean()
+        elif self.reduction == 'sum':
+            return loss.sum()
+        else:  # 'none'
+            return loss
+
 class WeightedMultiTaskLoss(nn.Module):
     def __init__(self, num_tasks):
         super().__init__()
@@ -123,8 +152,8 @@ class ComputeLoss:
         self.na = len(cfg.MODEL.ANCHORS[0]) // 2 # number of anchors
         self.nl = len(cfg.MODEL.ANCHORS) # number of layers
         self.image_size = cfg.img_size[0]
-        self.ssi = 0
-        self.gr = 1.0
+        self.ssi = 0 
+        self.gr = 0 # iou loss ratio (obj_loss = 1.0 or iou)
         self.cp, self.cn = 0.95, 0.05 # Smooth BCE
         self.anchors = torch.Tensor(cfg.MODEL.ANCHORS).view(self.nl, self.na, 2).to(device)
 
@@ -135,12 +164,14 @@ class ComputeLoss:
         self.class_weight = torch.zeros(80)
         for i in range(1, 81):
             self.class_weight[i - 1] = 1 - self.class_ratio[str(i)]
-        self.BCEcls_ava = nn.BCEWithLogitsLoss(pos_weight=self.class_weight.to(device))
-        self.BCEcls_df2 = nn.BCEWithLogitsLoss()
+        BCEcls_ava = nn.BCEWithLogitsLoss(pos_weight=self.class_weight.to(device))
+        self.BCEcls_ava = FocalLoss(BCEcls_ava, gamma = self.hyp['fl_gamma'])
+        BCEcls_df2 = nn.BCEWithLogitsLoss()
+        self.BCEcls_df2 = FocalLoss(BCEcls_df2, gamma = self.hyp['fl_gamma'])
         
         # 2. obj loss
-        self.balance = [4.0, 1.0, 0.4]
-        self.BCEobj = nn.BCEWithLogitsLoss()
+        BCEobj = nn.BCEWithLogitsLoss()
+        self.BCEobj = FocalLoss(BCEobj, gamma=self.hyp['fl_gamma'])
 
     
     def forward_ava(self, p_cls, p_bbox, t_cls, t_bbox):
@@ -205,7 +236,7 @@ class ComputeLoss:
                 #     [file.write('%11.5g ' * 4 % tuple(x) + '\n') for x in torch.cat((txy[i], twh[i]), 1)]
 
             obji = self.BCEobj(pi[..., 4], tobj)
-            lobj += obji * self.balance[i]  # obj loss
+            lobj += obji # obj loss
 
         lbox *= self.hyp['box']
         lobj *= self.hyp['obj']

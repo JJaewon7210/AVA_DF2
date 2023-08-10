@@ -119,7 +119,7 @@ def main(hyp, opt, device, tb_writer):
         logger.info('\n====> No test section during training model.')
         
     optimizer = create_optimizer_v2(model.parameters(), opt='adam', lr=hyp['lr0'], momentum=hyp['momentum'], weight_decay=hyp['weight_decay'])
-    scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=hyp['lrmax'], epochs = epochs, steps_per_epoch=num_batch)
+    scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=hyp['lrmax'], epochs = epochs, steps_per_epoch=num_batch, div_factor=hyp['lr0']/hyp['lrmax'])
 
     # EMA
     ema = ModelEMA(model)
