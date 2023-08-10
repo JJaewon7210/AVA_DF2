@@ -122,6 +122,7 @@ class ComputeLoss:
         self.nc = None
         self.na = len(cfg.MODEL.ANCHORS[0]) // 2 # number of anchors
         self.nl = len(cfg.MODEL.ANCHORS) # number of layers
+        self.image_size = cfg.img_size[0]
         self.ssi = 0
         self.gr = 1.0
         self.cp, self.cn = 0.95, 0.05 # Smooth BCE
@@ -144,7 +145,6 @@ class ComputeLoss:
     
     def forward_ava(self, p_cls, p_bbox, t_cls, t_bbox):
         self.nc = 80
-        self.BCEcls = self.BCEcls_ava
         t_cls = convert_one_hot_to_batch_class(t_cls)
         t_bbox = extract_bounding_boxes(t_bbox)
         
@@ -156,21 +156,20 @@ class ComputeLoss:
         
         p = [torch.cat((bbox, cls), dim=4) for bbox, cls in zip(p_bbox, p_cls)]
 
-        total_loss, loss_items = self.__call__(p, targets)
+        total_loss, loss_items = self.__call__(p, targets, self.BCEcls_ava)
         
         return total_loss, loss_items
     
     def forward_df2(self, p_cls, p_bbox, targets):
         self.nc = 13
-        self.BCEcls = self.BCEcls_df2
         p = [torch.cat((bbox, cls), dim=4) for bbox, cls in zip(p_bbox, p_cls)]
         targets = targets.to('cuda:0')
-        total_loss, loss_items = self.__call__(p, targets)
+        total_loss, loss_items = self.__call__(p, targets, self.BCEcls_df2)
         
         return total_loss, loss_items
 
 
-    def __call__(self, p, targets):  # predictions, targets, model
+    def __call__(self, p, targets, BCEcls):  # predictions, targets, model
         device = targets.device
         lcls, lbox, lobj = torch.zeros(1, device=device), torch.zeros(1, device=device), torch.zeros(1, device=device)
         tcls, tbox, indices, anchors = self.build_targets(p, targets)  # targets
@@ -199,7 +198,7 @@ class ComputeLoss:
                     t = torch.full_like(ps[:, 5:], self.cn, device=device)  # targets
                     t[range(n), tcls[i]] = self.cp
                     #t[t==self.cp] = iou.detach().clamp(0).type(t.dtype)
-                    lcls += self.BCEcls(ps[:, 5:], t)  # BCE
+                    lcls += BCEcls(ps[:, 5:], t)  # BCE
 
                 # Append targets to text file
                 # with open('targets.txt', 'a') as file:
@@ -232,8 +231,10 @@ class ComputeLoss:
 
         for i in range(self.nl):
             anchors = self.anchors[i]
-            gain[2:6] = torch.tensor(p[i].shape)[[3, 2, 3, 2]]  # xyxy gain
-
+            # gain[2:6] = torch.tensor(p[i].shape)[[3, 2, 3, 2]]  # xyxy gain
+            gain[2:4] = torch.tensor(p[i].shape)[[3, 2]]  # xy gain
+            gain[4:6] = torch.tensor([self.image_size, self.image_size]) # wh gain
+            
             # Match targets to anchors
             t = targets * gain
             if nt:

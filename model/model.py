@@ -156,22 +156,21 @@ class MTA_F3D_MODEL(nn.Module):
         
         '''
         out_bboxs
-        - out_bboxs[0]: inference, shape of [3087, 5]
+        - out_bboxs[0]: inference, shape of [7*7*3, 5]
         - out_bboxs[1]: features
             - out_bboxs[1][0] has the shape of [B, na, 7, 7, 5]
 
             
         out_clos
-        - out_clos[0]: inference, shape of [3087, 13]
+        - out_clos[0]: inference, shape of [7*7*3, 13]
         - out_clos[1]: features
             - out_clos[1][0] has the shape of [B, na, 7, 7, 13]
 
             
         out_acts
-        - out_acts[0]: inference, shape of [3087, 80]
+        - out_acts[0]: inference, shape of [7*7*3, 80]
         - out_acts[1]: features
             - out_acts[1][0] has the shape of [B, na, 7, 7, 80]
-            - when model is training mode, it outcomes the half of batch size [B//2, na, 7, 7, 80]
 
         '''
         
