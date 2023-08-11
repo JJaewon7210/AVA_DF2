@@ -8,9 +8,9 @@ warmup_epochs: 3.0  # warmup epochs (fractions ok)
 warmup_momentum: 0.8  # warmup initial momentum
 warmup_bias_lr: 0.1  # warmup initial bias lr
 
-box: 10  # box loss gain
-cls: 30  # cls loss gain
-obj: 70  # obj loss gain 
+box: 0.05  # box loss gain
+cls: 0.3  # cls loss gain
+obj: 0.7  # obj loss gain 
 
 cls_pw: 1.0  # cls BCELoss positive_weight
 obj_pw: 1.0  # obj BCELoss positive_weight

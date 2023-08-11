@@ -20,9 +20,11 @@ class DepthwiseConvBlock(nn.Module):
         self.pointwise = nn.Conv2d(in_channels, out_channels, kernel_size=1, 
                                    stride=1, padding=0, dilation=1, groups=1, bias=False)
         
+        nn.init.kaiming_normal_(self.depthwise.weight, mode='fan_out', nonlinearity='relu')
+        nn.init.kaiming_normal_(self.pointwise.weight, mode='fan_out', nonlinearity='relu')
         
         self.bn = nn.BatchNorm2d(out_channels, momentum=0.9997, eps=4e-5)
-        self.act = nn.ReLU()
+        self.act = nn.LeakyReLU(negative_slope=0.01)
         
     def forward(self, inputs):
         x = self.depthwise(inputs)
@@ -39,7 +41,7 @@ class ConvBlock(nn.Module):
         super(ConvBlock,self).__init__()
         self.conv = nn.Conv2d(in_channels, out_channels, kernel_size, stride=stride, padding=padding)
         self.bn = nn.BatchNorm2d(out_channels, momentum=0.9997, eps=4e-5)
-        self.act = nn.ReLU()
+        self.act = nn.LeakyReLU(negative_slope=0.01)
 
     def forward(self, inputs):
         x = self.conv(inputs)
@@ -64,33 +66,27 @@ class BiFPNBlock(nn.Module):
         self.p6_out = DepthwiseConvBlock(feature_size, feature_size)
         self.p7_out = DepthwiseConvBlock(feature_size, feature_size)
         
-        # TODO: Init weights
-        self.w1 = nn.Parameter(torch.Tensor(2, 4))
-        self.w1_relu = nn.ReLU()
-        self.w2 = nn.Parameter(torch.Tensor(3, 4))
-        self.w2_relu = nn.ReLU()
+        # Define learnable weights
+        self.w1= nn.Parameter(torch.ones(1))
+        self.w2= nn.Parameter(torch.ones(1))
+        self.w3 = nn.Parameter(torch.ones(1))
+        
     
     def forward(self, inputs):
         p3_x, p4_x, p5_x, p6_x, p7_x = inputs
         
-        # Calculate Top-Down Pathway
-        w1 = self.w1_relu(self.w1)
-        w1 = w1 / (torch.sum(w1, dim=0) + self.epsilon)
-        w2 = self.w2_relu(self.w2) ## <<ERROR
-        w2 = w2 / (torch.sum(w2, dim=0) + self.epsilon)
-        
         p7_td = p7_x
-        p6_td = self.p6_td(w1[0, 0] * p6_x + w1[1, 0] * F.interpolate(p7_td, scale_factor=2))        
-        p5_td = self.p5_td(w1[0, 1] * p5_x + w1[1, 1] * F.interpolate(p6_td, scale_factor=2))
-        p4_td = self.p4_td(w1[0, 2] * p4_x + w1[1, 2] * F.interpolate(p5_td, scale_factor=2))
-        p3_td = self.p3_td(w1[0, 3] * p3_x + w1[1, 3] * F.interpolate(p4_td, scale_factor=2))
+        p6_td = self.p6_td(p6_x) + F.interpolate(p7_td, scale_factor=2, mode='nearest')
+        p5_td = self.p5_td(p5_x) + F.interpolate(p6_td, scale_factor=2, mode='nearest')
+        p4_td = self.p4_td(p4_x) + F.interpolate(p5_td, scale_factor=2, mode='nearest')
+        p3_td = self.p3_td(p3_x) + F.interpolate(p4_td, scale_factor=2, mode='nearest')
         
         # Calculate Bottom-Up Pathway
         p3_out = p3_td
-        p4_out = self.p4_out(w2[0, 0] * p4_x + w2[1, 0] * p4_td + w2[2, 0] * nn.Upsample(scale_factor=0.5)(p3_out))
-        p5_out = self.p5_out(w2[0, 1] * p5_x + w2[1, 1] * p5_td + w2[2, 1] * nn.Upsample(scale_factor=0.5)(p4_out))
-        p6_out = self.p6_out(w2[0, 2] * p6_x + w2[1, 2] * p6_td + w2[2, 2] * nn.Upsample(scale_factor=0.5)(p5_out))
-        p7_out = self.p7_out(w2[0, 3] * p7_x + w2[1, 3] * p7_td + w2[2, 3] * nn.Upsample(scale_factor=0.5)(p6_out))
+        p4_out = self.p4_out(p4_x + p4_td + F.interpolate(p3_out, scale_factor=0.5, mode='nearest'))
+        p5_out = self.p5_out(p5_x + p5_td + F.interpolate(p4_out, scale_factor=0.5, mode='nearest'))
+        p6_out = self.p6_out(p6_x + p6_td + F.interpolate(p5_out, scale_factor=0.5, mode='nearest'))
+        p7_out = self.p7_out(p7_x + p7_td + F.interpolate(p6_out, scale_factor=0.5, mode='nearest'))
 
         return [p3_out, p4_out, p5_out, p6_out, p7_out]
     

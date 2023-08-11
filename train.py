@@ -28,7 +28,7 @@ from utils.general import labels_to_class_weights, increment_path, init_seeds, \
 from utils.wandb_logging.wandb_utils import WandbLogger, check_wandb_resume
 from utils.scheduler import CosineAnnealingWarmupRestarts
 from utils.torch_utils import ModelEMA, select_device, intersect_dicts, torch_distributed_zero_first, is_parallel
-from utils.plots import plot_images, plot_labels, plot_results, plot_evolution
+from utils.plots import plot_images, plot_labels, plot_results, plot_evolution, output_to_target
 
 from utils.loss_ava import ComputeLoss,  WeightedMultiTaskLoss
 from datasets.ava_dataset import AvaWithPseudoLabel, Ava
@@ -266,34 +266,11 @@ def main(hyp, opt, device, tb_writer):
                 
                 preds_clo = torch.cat((out_bbox_infer[:batch_size, ...], out_clo_infer[:batch_size, ...]), dim=2)
                 preds_clo = non_max_suppression(preds_clo)
-                
-                new_tensors = []
-                for batch_idx, tensor in enumerate(preds_clo):
-                    if tensor.nelement() != 0:  # Check if tensor is not empty
-                        # Create a tensor for the batch_idx which has the same shape as tensor's 0th dimension
-                        batch_idx_tensor = torch.full((tensor.shape[0], 1), batch_idx, device=preds_clo[0].device)
-                        # Concatenate batch_idx_tensor with the original tensor along dimension 1
-                        modified_tensor = torch.cat([batch_idx_tensor, tensor], dim=1)
-                        new_tensors.append(modified_tensor)
-                if new_tensors:
-                    preds_clo_new = torch.cat(new_tensors, dim=0).detach()
-                else:
-                    preds_clo_new = torch.cat(preds_clo, dim=0).detach()
+                preds_clo_new = output_to_target(preds_clo)
                 
                 preds_act = torch.cat((out_bbox_infer[-batch_size:, ...], out_act_infer[-batch_size:, ...]), dim=2)
                 preds_act = non_max_suppression(preds_act)
-                new_tensors = []
-                for batch_idx, tensor in enumerate(preds_act):
-                    if tensor.nelement() != 0:  # Check if tensor is not empty
-                        # Create a tensor for the batch_idx which has the same shape as tensor's 0th dimension
-                        batch_idx_tensor = torch.full((tensor.shape[0], 1), batch_idx, device=preds_act[0].device)
-                        # Concatenate batch_idx_tensor with the original tensor along dimension 1
-                        modified_tensor = torch.cat([batch_idx_tensor, tensor], dim=1)
-                        new_tensors.append(modified_tensor)
-                if new_tensors:
-                    preds_act_new = torch.cat(new_tensors, dim=0).detach()
-                else:
-                    preds_act_new = torch.cat(preds_act, dim=0).detach()
+                preds_act_new = output_to_target(preds_act)
                 
                 Thread(target=plot_images, args=(model_input[:batch_size, :, -1, :, :], preds_clo_new, None, f_clo), daemon=True).start()
                 Thread(target=plot_images, args=(model_input[-batch_size:, :, -1, :, :], preds_act_new, None, f_act), daemon=True).start()

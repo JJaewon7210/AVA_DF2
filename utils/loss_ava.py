@@ -265,17 +265,15 @@ class ComputeLoss:
         for i in range(self.nl):
             anchors = self.anchors[i]
             gain[2:6] = torch.tensor(p[i].shape)[[3, 2, 3, 2]]  # xyxy gain
-            # gain[2:4] = torch.tensor(p[i].shape)[[3, 2]]  # xy gain
-            # gain[4:6] = torch.tensor([self.image_size, self.image_size]) # wh gain
             
             # Match targets to anchors
-            t = targets * gain
+            t = targets * gain # na, nt, 7
             if nt:
                 # Matches
-                r = t[:, :, 4:6] / anchors[:, None]  # wh ratio
-                j = torch.max(r, 1. / r).max(2)[0] < self.hyp['anchor_t']  # compare
+                r = t[:, :, 4:6] / anchors[:, None]  # wh ratio # na, nt, 2
+                j = torch.max(r, 1. / r).max(2)[0] < self.hyp['anchor_t']  # compare # na, nt
                 # j = wh_iou(anchors, t[:, 4:6]) > model.hyp['iou_t']  # iou(3,n)=wh_iou(anchors(3,2), gwh(n,2))
-                t = t[j]  # filter
+                t = t[j]  # filter # na*nt - filter, 7
 
                 # Offsets
                 gxy = t[:, 2:4]  # grid xy
@@ -283,7 +281,7 @@ class ComputeLoss:
                 j, k = ((gxy % 1. < g) & (gxy > 1.)).T
                 l, m = ((gxi % 1. < g) & (gxi > 1.)).T
                 j = torch.stack((torch.ones_like(j), j, k, l, m))
-                t = t.repeat((5, 1, 1))[j]
+                t = t.repeat((5, 1, 1))[j] # (na*nt - filter) * 3 , 7
                 offsets = (torch.zeros_like(gxy)[None] + off[:, None])[j]
             else:
                 t = targets[0]

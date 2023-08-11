@@ -25,6 +25,7 @@
 
 storage.googleapis.com
 ex.py
+traindf2.py
 inference/*
 weights/*
 runs/*
