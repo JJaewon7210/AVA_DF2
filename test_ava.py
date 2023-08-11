@@ -247,9 +247,9 @@ def test_ava(
 
         # Plot images
         if plots and batch_i < 3:
-            f = save_dir / f'test_batch{batch_i}_labels.jpg'  # labels
+            f = save_dir / f'test_ava_batch{batch_i}_labels.jpg'  # labels
             Thread(target=plot_images, args=(img, targets, paths, f, names), daemon=True).start()
-            f = save_dir / f'test_batch{batch_i}_pred.jpg'  # predictions
+            f = save_dir / f'test_ava_batch{batch_i}_pred.jpg'  # predictions
             Thread(target=plot_images, args=(img, output_to_target(out), paths, f, names), daemon=True).start()
 
     # Compute statistics
@@ -280,10 +280,10 @@ def test_ava(
     if plots:
         confusion_matrix.plot(save_dir=save_dir, names=list(names.values()))
         if wandb_logger and wandb_logger.wandb:
-            val_batches = [wandb_logger.wandb.Image(str(f), caption=f.name) for f in sorted(save_dir.glob('test*.jpg'))]
+            val_batches = [wandb_logger.wandb.Image(str(f), caption=f.name) for f in sorted(save_dir.glob('test_ava*.jpg'))]
             wandb_logger.log({"Validation": val_batches})
     if wandb_images:
-        wandb_logger.log({"Bounding Box Debugger/Images": wandb_images})
+        wandb_logger.log({"Bounding Box Debugger/Images_ava": wandb_images})
 
     # Save JSON
     if save_json and len(jdict):

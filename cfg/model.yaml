@@ -13,7 +13,8 @@ MODEL:
   BACKBONE_2D: darknet
   ANCHORS: 
   # For 3 anchors x 1 detection layer
-  - [ 37, 89,   72, 175,   151, 201]  # P5/32 (AVA) k-mean (k=3)
+  - [41,42,  37,89,  63,128,  72,175,  99,91,  151,201]
+  # - [ 37, 89,   72, 175,   151, 201]  # P5/32 (AVA) k-mean (k=3)
 
   # For 3 anchors x 3 detection layer
   # - [ 56 , 21,   96 , 37 ,   143, 40  ]  # P3/8 (AVA)  k-mean (k=9)

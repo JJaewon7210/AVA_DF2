@@ -157,8 +157,8 @@ def main(hyp, opt, device, tb_writer):
     logger.info(f'Using {dataloader.num_workers} dataloader workers\n'
                 f'Logging results to {save_dir}\n'
                 f'Starting training for {epochs} epochs...')
-    AVA_L = ComputeLoss(cfg=opt)
-    LOSS = WeightedMultiTaskLoss(num_tasks=4)
+    LOSS = ComputeLoss(detector_head=model.head_bbox, hyp=hyp)
+    WLOSS = WeightedMultiTaskLoss(num_tasks=4)
     accumulation_steps = 4
     
     # Start epoch ------------------------------------------------------------------------------------------------------
@@ -201,7 +201,7 @@ def main(hyp, opt, device, tb_writer):
             '''
             
             # Concatenate 'imgs_duplicated' and 'clips' along the first dimension, which has the shape of [2B, 3, T, H, W]
-            imgs_duplicated = imgs.unsqueeze(2).repeat((1, 1, clips.shape[2], 1, 1))
+            imgs_duplicated = imgs.unsqueeze(2).repeat((1, 1, opt.DATA.NUM_FRAMES, 1, 1))
             model_input = torch.cat([imgs_duplicated, clips], dim=0)
             
             # Batch-02. Forward
@@ -218,11 +218,11 @@ def main(hyp, opt, device, tb_writer):
                 out_act_AVA = [i[-batch_size:] for i in out_act_features]
                 out_clo_DF2 = [i[:batch_size] for i in out_clo_features]
                 
-                _sum, losses = AVA_L.forward_ava(p_cls=out_act_AVA, p_bbox=out_bbox_AVA, t_cls=cls, t_bbox=boxes)
+                _sum, losses = LOSS.forward_ava(p_cls=out_act_AVA, p_bbox=out_bbox_AVA, t_cls=cls, t_bbox=boxes)
                 lbox, lobj, lact, loss = torch.split(losses, 1)
-                _sum, losses = AVA_L.forward_df2(p_cls=out_clo_DF2, p_bbox=out_bbox_DF2, targets=labels)
+                _sum, losses = LOSS.forward_df2(p_cls=out_clo_DF2, p_bbox=out_bbox_DF2, targets=labels)
                 _lbox, _lobj, lclo, loss = torch.split(losses, 1)
-                total_loss = LOSS([lbox, lobj, lact, lclo]) / accumulation_steps
+                total_loss = WLOSS([lbox, lobj, lact, lclo])
                 
                 
             # Batch-03. Backward
@@ -260,9 +260,9 @@ def main(hyp, opt, device, tb_writer):
                     
             # Batch-05. Plot
             if (plots) and (cur_step % opt.log_step == 0):
-                plot_i = (cur_step // opt.log_step) % 5
-                f_clo = save_dir / f'train_batch_clo{plot_i}.jpg'  # filename
-                f_act = save_dir / f'train_batch_act{plot_i}.jpg'  # filename
+                plot_i = (cur_step // opt.log_step) % 4
+                f_clo = save_dir / f'train_batch{plot_i}_df2.jpg'  # filename
+                f_act = save_dir / f'train_batch{plot_i}_ava.jpg'  # filename
                 
                 preds_clo = torch.cat((out_bbox_infer[:batch_size, ...], out_clo_infer[:batch_size, ...]), dim=2)
                 preds_clo = non_max_suppression(preds_clo)

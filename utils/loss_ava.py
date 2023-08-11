@@ -143,38 +143,30 @@ class WeightedMultiTaskLoss(nn.Module):
 
 class ComputeLoss:
     # Compute losses
-    def __init__(self, cfg, device='cuda:0'):
+    def __init__(self, detector_head, hyp, device='cuda:0'):
         super(ComputeLoss, self).__init__()
         
         # Set Config
-        self.hyp = cfg.hyp
-        self.nc = None
-        self.na = len(cfg.MODEL.ANCHORS[0]) // 2 # number of anchors
-        self.nl = len(cfg.MODEL.ANCHORS) # number of layers
-        self.image_size = cfg.img_size[0]
+        det = detector_head
+        for k in 'na', 'nl', 'anchors':
+            setattr(self, k, getattr(det, k))
+            
         self.ssi = 0 
         self.gr = 0 # iou loss ratio (obj_loss = 1.0 or iou)
-        self.cp, self.cn = 0.95, 0.05 # Smooth BCE
-        stride = {3: [8, 16, 32], 2: [16, 32], 1: [32]}.get(self.nl, "Unsupported value for self.nl. It must be 1, 2, or 3.")
-        anchors_grid = torch.Tensor(cfg.MODEL.ANCHORS).view(self.nl, self.na, 2).to(device)
-        self.anchors = anchors_grid / torch.tensor(stride, device=device).view(-1, 1, 1)
 
         # Define criteria
-        # 1. cls loss
-        with open('cfg/ava_categories_ratio.json', 'r') as fb:
-            self.class_ratio = json.load(fb)
-        self.class_weight = torch.zeros(80)
-        for i in range(1, 81):
-            self.class_weight[i - 1] = 1 - self.class_ratio[str(i)]
-        BCEcls_ava = nn.BCEWithLogitsLoss(pos_weight=self.class_weight.to(device))
-        self.BCEcls_ava = FocalLoss(BCEcls_ava, gamma = self.hyp['fl_gamma'])
-        BCEcls_df2 = nn.BCEWithLogitsLoss()
-        self.BCEcls_df2 = FocalLoss(BCEcls_df2, gamma = self.hyp['fl_gamma'])
+        BCEcls_ava = nn.BCEWithLogitsLoss(pos_weight=torch.tensor([hyp['cls_pw']], device=device))
+        BCEcls_df2 = nn.BCEWithLogitsLoss(pos_weight=torch.tensor([hyp['cls_pw']], device=device))
+        BCEobj = nn.BCEWithLogitsLoss(pos_weight=torch.tensor([hyp['obj_pw']], device=device))
+        self.cp, self.cn = 1.0, 0.0 # Smooth BCE
         
-        # 2. obj loss
-        BCEobj = nn.BCEWithLogitsLoss()
-        self.BCEobj = FocalLoss(BCEobj, gamma=self.hyp['fl_gamma'])
-
+        # Focal loss
+        g = hyp['fl_gamma']  # focal loss gamma
+        if g > 0:
+            BCEcls_ava, BCEcls_df2, BCEobj = FocalLoss(BCEcls_ava, g), FocalLoss(BCEcls_df2, g), FocalLoss(BCEobj, g)
+        
+        self.BCEcls_ava, self.BCEcls_df2, self.BCEobj, self.hyp = BCEcls_ava, BCEcls_df2, BCEobj, hyp
+        self.anchors = self.anchors.to(device)
     
     def forward_ava(self, p_cls, p_bbox, t_cls, t_bbox):
         self.nc = 80

@@ -1,7 +1,7 @@
 # hyperparameters (from yolov7)
 
-lr0: 0.01  # initial learning rate (SGD=1E-2, Adam=1E-3)
-lrmax: 0.1  # final OneCycleLR learning rate (lr0 * lrf)
+lr0: 0.001  # initial learning rate (SGD=1E-2, Adam=1E-3)
+lrmax: 0.01  # final OneCycleLR learning rate (lr0 * lrf)
 momentum: 0.937  # SGD momentum/Adam beta1
 weight_decay: 0.0005  # optimizer weight decay 5e-4
 warmup_epochs: 3.0  # warmup epochs (fractions ok)
@@ -9,8 +9,8 @@ warmup_momentum: 0.8  # warmup initial momentum
 warmup_bias_lr: 0.1  # warmup initial bias lr
 
 box: 0.05  # box loss gain
-cls: 0.3  # cls loss gain
-obj: 0.7  # obj loss gain 
+cls: 0.5  # cls loss gain
+obj: 1.0  # obj loss gain 
 
 cls_pw: 1.0  # cls BCELoss positive_weight
 obj_pw: 1.0  # obj BCELoss positive_weight
@@ -32,4 +32,4 @@ mosaic: 1.0  # image mosaic (probability)
 mixup: 0.15  # image mixup (probability)
 copy_paste: 0.0  # image copy paste (probability)
 paste_in: 0.15  # image copy paste (probability), use 0 for faster training
-loss_ota: 1 # use ComputeLossOTA, use 0 for faster training
+loss_ota: 0 # use ComputeLossOTA, use 0 for faster training
