@@ -22,13 +22,12 @@ After freezing the YOWO model, features are extracted post the CFAM module. Thes
 
 **Performance Metrics on deepfashionv2 validation set**:
 
-```
-| Metric | Score |
-| --- | --- |
-| Precision | 0.1968 |
-| Recall | 0.7282 |
-| mAP0.5 | 0.1263 |
-```
+| Metric   | Score  |
+| -------- | ------ |
+| Precision| 0.1968 |
+| Recall   | 0.7282 |
+| mAP0.5   | 0.1263 |
+
 
 **Note**: The confidence threshold was set to 0.001 and the IOU threshold was set to 0.6. Given that deepfashionv2 boxes represent clothing and predicted bounding boxes encompass humans, achieving the IOU threshold is challenging, which results in the observed performance.
 
@@ -42,7 +41,7 @@ Here is the example of the prediction during test.
 
 ---
 
-- [] Model 02: YOWO with 2D-backbone (In Progress)
+- [ ] Model 02: YOWO with 2D-backbone (In Progress)
 
 For this iteration, we're extracting features after the 2D-backbone of YOWO. The features are then processed by the Class Head module to classify clothing in the deepfashionv2 dataset.
 
