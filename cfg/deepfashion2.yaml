@@ -29,8 +29,8 @@ names: [
 # opt parameter (from main.py in yolov7 project)
 weights: ''  # initial weights path
 epochs: 10  # number of epochs
-batch_size: 4  # total batch size for all GPUs
-batch_size_test: 4
+batch_size: 2  # total batch size for all GPUs
+batch_size_test: 2
 img_size: [224, 224]  # train image sizes
 rect: false  # rectangular training
 resume: false  # resume most recent training
