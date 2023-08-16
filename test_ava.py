@@ -18,6 +18,7 @@ from datasets.ava_dataset import AvaWithPseudoLabel, Ava
 from datasets.yolo_datasets import DeepFasion2WithPseudoLabel, InfiniteDataLoader, LoadImagesAndLabels
 from datasets.combined_dataset import CombinedDataset
 from utils.loss_ava import extract_bounding_boxes, convert_one_hot_to_batch_class
+from model.YOWO import YOWO_CUSTOM
 
 def test_ava(
              opt,
@@ -57,9 +58,14 @@ def test_ava(
         (save_dir / 'labels' if save_txt else save_dir).mkdir(parents=True, exist_ok=True)  # make dir
 
         # Load model
-        model = torch.load(weights, map_location=device)  # load FP32 model
+        model = YOWO_CUSTOM(cfg=opt)
+        model = model.load_pretrain()
         gs = 32  # grid size (max stride)
         imgsz = check_img_size(imgsz, s=gs)  # check img_size
+        # # Load model
+        # model = torch.load(weights, map_location=device)  # load FP32 model
+        # gs = 32  # grid size (max stride)
+        # imgsz = check_img_size(imgsz, s=gs)  # check img_size
         
         if trace:
             model = TracedModel(model, device, imgsz)
@@ -133,7 +139,7 @@ def test_ava(
         if isinstance(t_cls, np.ndarray):
             t_bbox = torch.Tensor(t_bbox)
             t_cls = torch.Tensor(t_cls)
-        targets = torch.cat((t_bbox, t_cls[..., 1:]), dim=1).to(device)
+        targets = torch.cat((t_cls, t_bbox[..., 1:]), dim=1).to(device)
         nb, _c, _t, height, width = clips.shape  # batch size, channels, T, height, width
         
 
@@ -246,11 +252,12 @@ def test_ava(
             stats.append((correct.cpu(), pred[:, 4].cpu(), pred[:, 5].cpu(), tcls))
 
         # Plot images
-        if plots and batch_i < 3:
+        if plots and batch_i < 15:
             f = save_dir / f'test_ava_batch{batch_i}_labels.jpg'  # labels
             Thread(target=plot_images, args=(img, targets, paths, f, names), daemon=True).start()
             f = save_dir / f'test_ava_batch{batch_i}_pred.jpg'  # predictions
-            Thread(target=plot_images, args=(img, output_to_target(out), paths, f, names), daemon=True).start()
+            target_p = output_to_target(out)
+            Thread(target=plot_images, args=(img, target_p, paths, f, names), daemon=True).start()
 
     # Compute statistics
     stats = [np.concatenate(x, 0) for x in zip(*stats)]  # to numpy
@@ -323,11 +330,11 @@ def test_ava(
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(prog='test.py')
-    parser.add_argument('--weights', type=str, default='runs/train/AVA_DF25/weights/last.pt', help='model.pt path(s)')
+    parser.add_argument('--weights', type=str, default='runs/train/AVA_DF22/weights/best.pt', help='model.pt path(s)')
     parser.add_argument('--batch-size-test', type=int, default=1, help='size of each image batch')
     parser.add_argument('--img-size', type=int, default=224, help='inference size (pixels)')
-    parser.add_argument('--conf-thres', type=float, default=0.1, help='object confidence threshold')
-    parser.add_argument('--iou-thres', type=float, default=0.5, help='IOU threshold for NMS')
+    parser.add_argument('--conf-thres', type=float, default=0.001, help='object confidence threshold')
+    parser.add_argument('--iou-thres', type=float, default=0.25, help='IOU threshold for NMS')
     parser.add_argument('--task', default='val', help='train, val, test, speed or study')
     parser.add_argument('--device', default='', help='cuda device, i.e. 0 or 0,1,2,3 or cpu')
     parser.add_argument('--single-cls', action='store_true', help='treat as single-class dataset')

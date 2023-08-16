@@ -17,6 +17,7 @@ from utils.torch_utils import select_device, time_synchronized, TracedModel
 from datasets.ava_dataset import AvaWithPseudoLabel
 from datasets.yolo_datasets import DeepFasion2WithPseudoLabel, InfiniteDataLoader, LoadImagesAndLabels
 from datasets.combined_dataset import CombinedDataset
+from model.YOWO import YOWO_CUSTOM
 
 def test_df2(
              opt,
@@ -117,20 +118,14 @@ def test_df2(
         with torch.no_grad():
             # Run model
             t = time_synchronized()
-            # out, train_out = model(img, augment=augment)  # inference and training outputs
             out_bboxs, out_clos, out_acts = model(imgs_duplicated)
             
             out_bbox_infer, out_bbox_features = out_bboxs[0], out_bboxs[1]
             out_clo_infer, out_clo_features = out_clos[0], out_clos[1]
             out_act_infer, out_act_features = out_acts[0], out_acts[1]
-            out = torch.cat((out_bbox_infer, out_clo_infer), dim=-1)
-            
-            
+            out = torch.cat((out_bbox_infer, out_clo_infer), dim=2)
             t0 += time_synchronized() - t
 
-            # # Compute loss
-            # if compute_loss:
-            #     loss += compute_loss([x.float() for x in train_out], targets)[1][:3]  # box, obj, cls
 
             # Run NMS
             targets[:, 2:] *= torch.Tensor([width, height, width, height]).to(device)  # to pixels
@@ -303,11 +298,11 @@ def test_df2(
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(prog='test.py')
-    parser.add_argument('--weights', type=str, default='runs/train/AVA_DF218/weights/init.pt', help='model.pt path(s)')
+    parser.add_argument('--weights', type=str, default='runs/train/AVA_DF22/weights/best.pt', help='model.pt path(s)')
     parser.add_argument('--batch-size', type=int, default=1, help='size of each image batch')
     parser.add_argument('--img-size', type=int, default=224, help='inference size (pixels)')
-    parser.add_argument('--conf-thres', type=float, default=0.001, help='object confidence threshold')
-    parser.add_argument('--iou-thres', type=float, default=0.65, help='IOU threshold for NMS')
+    parser.add_argument('--conf-thres', type=float, default=0.1, help='object confidence threshold')
+    parser.add_argument('--iou-thres', type=float, default=0.1, help='IOU threshold for NMS')
     parser.add_argument('--task', default='val', help='train, val, test, speed or study')
     parser.add_argument('--device', default='', help='cuda device, i.e. 0 or 0,1,2,3 or cpu')
     parser.add_argument('--single-cls', action='store_true', help='treat as single-class dataset')
