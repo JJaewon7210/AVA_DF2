@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
-from cfg.yolo_cfg import *
+from model.yolo_cfg import *
 #from layers.batchnorm.bn import BN2d
 
 class MaxPoolStride1(nn.Module):
