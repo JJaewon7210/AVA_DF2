@@ -118,7 +118,8 @@ def main(hyp, opt, device, tb_writer):
         
     # 7. Optimizer, LR scheduler
     optimizer = create_optimizer_v2(model.parameters(), opt='adam', lr=hyp['lr0'], momentum=hyp['momentum'], weight_decay=hyp['weight_decay'])
-    scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=hyp['lrmax'], epochs = epochs, steps_per_epoch=num_batch, div_factor=10)
+    # scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=hyp['lrmax'], epochs = epochs, steps_per_epoch=num_batch, div_factor=10)
+    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=1, gamma=1)
 
     # EMA
     ema = ModelEMA(model)
