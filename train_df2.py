@@ -201,7 +201,8 @@ def main(hyp, opt, device, tb_writer):
                 
                 _sum, losses = LOSS.forward_df2(p_cls=out_clo_DF2, p_bbox=out_bbox_DF2, targets=labels)
                 _lbox, _lobj, lclo, loss = torch.split(losses, 1)
-                total_loss = WLOSS([_lbox, _lobj, lclo])
+                # total_loss = WLOSS([_lbox, _lobj, lclo])
+                total_loss = lclo.to(device='cuda:0')
                 
             # Batch-03. Backward
             scaler.scale(total_loss).backward()
