@@ -251,7 +251,7 @@ class ComputeLoss:
         g = 0.5  # bias
         off = torch.tensor([[0, 0],
                             [1, 0], [0, 1], [-1, 0], [0, -1],  # j,k,l,m
-                            [1, 1], [1, -1], [-1, 1], [-1, -1],  # jk,jm,lk,lm
+                            # [1, 1], [1, -1], [-1, 1], [-1, -1],  # jk,jm,lk,lm
                             ], device=targets.device).float() * g  # offsets
 
         for i in range(self.nl):
@@ -263,7 +263,8 @@ class ComputeLoss:
             if nt:
                 # Matches
                 r = t[:, :, 4:6] / anchors[:, None]  # wh ratio # na, nt, 2
-                j = torch.max(r, 1. / r).max(2)[0] < self.hyp['anchor_t']  # compare # na, nt
+                j = torch.max(r, 1. / r).max(2)[0] < 23  # compare # na, nt
+                # j = torch.max(r, 1. / r).max(2)[0] < self.hyp['anchor_t']  # compare # na, nt
                 # j = wh_iou(anchors, t[:, 4:6]) > model.hyp['iou_t']  # iou(3,n)=wh_iou(anchors(3,2), gwh(n,2))
                 t = t[j]  # filter # na*nt - filter, 7
 
@@ -273,8 +274,8 @@ class ComputeLoss:
                 j, k = ((gxy % 1. < g) & (gxy > 1.)).T
                 l, m = ((gxi % 1. < g) & (gxi > 1.)).T
                 # j = torch.stack((torch.ones_like(j), j, k, l, m))
-                j = torch.stack([torch.ones_like(j)] * 9, dim=-1)
-                t = t.repeat((9, 1, 1))[j] # (na*nt - filter) * 3 , 7
+                j = torch.stack((torch.ones_like(j), torch.ones_like(j), torch.ones_like(j), torch.ones_like(j), torch.ones_like(j)))
+                t = t.repeat((5, 1, 1))[j] # (na*nt - filter) * 3 , 7
                 offsets = (torch.zeros_like(gxy)[None] + off[:, None])[j]
             else:
                 t = targets[0]
