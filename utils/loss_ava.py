@@ -239,6 +239,25 @@ class ComputeLoss:
 
         loss = lbox + lobj + lcls
         return loss * bs, torch.cat((lbox, lobj, lcls, loss))
+    
+    def generate_grid_within_bbox(self, bbox):
+        xc, yc, width, height = bbox
+        xmin = int(xc - width / 2)
+        xmax = int(xc + width / 2)
+        ymin = int(yc - height / 2)
+        ymax = int(yc + height / 2)
+        
+        x_points = torch.arange(xmin, xmax + 1, dtype=torch.int32)
+        y_points = torch.arange(ymin, ymax + 1, dtype=torch.int32)
+        
+        grid = torch.meshgrid(x_points, y_points, indexing='ij')  # Pass indexing='ij'
+        grid = torch.stack(grid, dim=-1).view(-1, 2)
+        
+        # Subtract center coordinates from each grid point
+        center_coords = torch.tensor([int(xc), int(yc)])
+        grid = grid - center_coords
+        
+        return grid.to(device = 'cuda:0')
 
     def build_targets(self, p, targets):
         # Build targets for compute_loss(), input targets(image,class,x,y,w,h)
@@ -261,22 +280,27 @@ class ComputeLoss:
             # Match targets to anchors
             t = targets * gain # na, nt, 7
             if nt:
-                # Matches
-                r = t[:, :, 4:6] / anchors[:, None]  # wh ratio # na, nt, 2
-                j = torch.max(r, 1. / r).max(2)[0] < 23  # compare # na, nt
-                # j = torch.max(r, 1. / r).max(2)[0] < self.hyp['anchor_t']  # compare # na, nt
-                # j = wh_iou(anchors, t[:, 4:6]) > model.hyp['iou_t']  # iou(3,n)=wh_iou(anchors(3,2), gwh(n,2))
-                t = t[j]  # filter # na*nt - filter, 7
-
-                # Offsets
-                gxy = t[:, 2:4]  # grid xy
-                gxi = gain[[2, 3]] - gxy  # inverse
-                j, k = ((gxy % 1. < g) & (gxy > 1.)).T
-                l, m = ((gxi % 1. < g) & (gxi > 1.)).T
-                # j = torch.stack((torch.ones_like(j), j, k, l, m))
-                j = torch.stack((torch.ones_like(j), torch.ones_like(j), torch.ones_like(j), torch.ones_like(j), torch.ones_like(j)))
-                t = t.repeat((5, 1, 1))[j] # (na*nt - filter) * 3 , 7
-                offsets = (torch.zeros_like(gxy)[None] + off[:, None])[j]
+                t = t.view(na*nt, 7)  # Reshape t to (na*nt, 7)
+                
+                t_after = []
+                offsets_after = []
+                
+                for ti in range(na*nt):
+                    t_ = t[ti, ... ]
+                    bbox = t[ti, 2:6]
+                    gxy = t[ti, 2:4]
+                    off = self.generate_grid_within_bbox(bbox)
+                    
+                    j = torch.ones((len(off))).bool()
+                    t_new = t_.repeat(len(off), 1, 1)[j]
+                    offsets_new = (torch.zeros_like(gxy)[None] + off[:, None])[j]
+                    
+                    t_after.append(t_new)
+                    offsets_after.append(offsets_new)
+                    
+                t = torch.cat(t_after).squeeze()
+                offsets = torch.cat(offsets_after).squeeze()
+                
             else:
                 t = targets[0]
                 offsets = 0
