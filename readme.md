@@ -48,9 +48,13 @@ For this iteration, we're extracting features after the 2D-backbone of YOWO. The
 
 ![스크린샷 2023-08-16 204258](https://github.com/JJaewon7210/Combined_Learner_AVA2.2_and_Deepfashion2/assets/96426723/34b5b1dd-f2cc-42c0-9b20-724fcd282410)
 
-**Performance Metrics**:
+**Performance Metrics on deepfashionv2 validation set**:
 
-_The results will be updated upon completion._
+| Metric   | Score  |
+| -------- | ------ |
+| Precision| 0.2768 |
+| Recall   | 0.6835 |
+| mAP0.5   | 0.1366 |
 
 ---
 
@@ -68,4 +72,4 @@ Here is the example of the prediction during training.
 
 To see the results, please follow the link below:
 
-[WandB Project Results](https://wandb.ai/jaewon012754/YOLOR/runs/t7ax9mea?workspace=user-jjw012754)
+[WandB Project Results](https://wandb.ai/jaewon012754/YOLOR/runs/)
