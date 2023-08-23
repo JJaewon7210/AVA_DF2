@@ -118,8 +118,8 @@ def main(hyp, opt, device, tb_writer):
         
     # 7. Optimizer, LR scheduler
     optimizer = create_optimizer_v2(model.parameters(), opt='adam', lr=hyp['lr0'], momentum=hyp['momentum'], weight_decay=hyp['weight_decay'])
-    # scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=hyp['lrmax'], epochs = epochs, steps_per_epoch=num_batch, div_factor=10)
-    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=1, gamma=1)
+    scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=hyp['lrmax'], epochs = epochs, steps_per_epoch=num_batch, div_factor=10)
+    # scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=1, gamma=1)
 
     # EMA
     ema = ModelEMA(model)
@@ -246,7 +246,7 @@ def main(hyp, opt, device, tb_writer):
                 
                 # preds_clo = torch.cat((out_bbox_infer, out_clo_infer), dim=2)
                 preds_clo = torch.cat((out_bbox_infer, out_clo_infer), dim=2)
-                preds_clo = non_max_suppression(preds_clo)
+                preds_clo = non_max_suppression(preds_clo, conf_thres=0.01, iou_thres=0.6)
                 preds_clo_new = output_to_target(preds_clo)
 
                 Thread(target=plot_images, args=(imgs, labels, None, f_clol), daemon=True).start()
