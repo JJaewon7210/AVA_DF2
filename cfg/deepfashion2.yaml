@@ -29,7 +29,7 @@ names: [
 # opt parameter (from main.py in yolov7 project)
 weights: ''  # initial weights path
 epochs: 10  # number of epochs
-batch_size: 8  # total batch size for all GPUs
+batch_size: 2  # total batch size for all GPUs
 batch_size_test: 2
 img_size: [224, 224]  # train image sizes
 rect: false  # rectangular training
@@ -39,7 +39,7 @@ notest: false  # only test final epoch
 noautoanchor: false  # disable autoanchor check
 bucket: ''  # gsutil bucket
 cache_images: false  # cache images for faster training
-image_weights: false  # use weighted image selection for training
+image_weights: true  # use weighted image selection for training
 device: ''  # cuda device, i.e., 0 or 0,1,2,3 or cpu
 single_cls: false  # train multi-class data as single-class
 sync_bn: false  # use SyncBatchNorm, only available in DDP mode
