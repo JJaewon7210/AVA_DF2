@@ -20,11 +20,28 @@ from scipy.signal import butter, filtfilt
 
 from utils.general import xywh2xyxy, xyxy2xywh
 from utils.metrics import fitness
+from fvcore.common.file_io import PathManager
 
 # Settings
 matplotlib.rc('font', **{'size': 11})
 matplotlib.use('Agg')  # for writing to files only
 
+def read_labelmap(labelmap_file):
+    """Read label map and class ids."""
+
+    labelmap = []
+    class_ids = set()
+    name = ""
+    class_id = ""
+    with PathManager.open(labelmap_file, "r") as f:
+        for line in f:
+            if line.startswith("  name:"):
+                name = line.split('"')[1]
+            elif line.startswith("  id:") or line.startswith("  label_id:"):
+                class_id = int(line.strip().split(" ")[-1])
+                labelmap.append({"id": class_id, "name": name})
+                class_ids.add(class_id)
+    return labelmap, class_ids
 
 def color_list():
     # Return first 10 plt colors as (r,g,b) https://stackoverflow.com/questions/51350872/python-from-color-name-to-rgb
@@ -81,7 +98,6 @@ def plot_one_box_PIL(box, img, color=None, label=None, line_thickness=None):
         draw.text((box[0], box[1] - txt_height + 1), label, fill=(255, 255, 255), font=font)
     return np.asarray(img)
 
-
 def plot_wh_methods():  # from utils.plots import *; plot_wh_methods()
     # Compares the two methods for width-height anchor multiplication
     # https://github.com/ultralytics/yolov3/issues/168
@@ -101,7 +117,6 @@ def plot_wh_methods():  # from utils.plots import *; plot_wh_methods()
     plt.legend()
     fig.savefig('comparison.png', dpi=200)
 
-
 def output_to_target(output):
     # Convert model output to target format [batch_id, class_id, x, y, w, h, conf]
     targets = []
@@ -110,6 +125,66 @@ def output_to_target(output):
             targets.append([i, cls, *list(*xyxy2xywh(np.array(box)[None])), conf])
     return np.array(targets)
 
+def un_normalized_images(images, mean=None, std=None, convert_cv2=True):
+    if isinstance(images, torch.Tensor):
+        images = images.detach().cpu().float().numpy()
+    
+    if mean is not None and std is not None:
+        mean = np.array(mean, dtype=np.float32)
+        std = np.array(std, dtype=np.float32)
+        images = images * std.reshape(1, 3, 1, 1) + mean.reshape(1, 3, 1, 1)
+    
+    batch_size, num_channels, height, width = images.shape
+    images = images.transpose(0, 2, 3, 1)
+    images = (images * 255).astype(np.uint8)
+    
+    if convert_cv2:
+        images_cv2 = []
+        for i in range(batch_size):
+            image_cv2 = cv2.cvtColor(images[i], cv2.COLOR_RGB2BGR)
+            images_cv2.append(image_cv2)
+        images = np.stack(images_cv2)
+
+    return images
+
+def plot_batch_image_from_preds(frames, preds, save_path='batch_image.jpg', labelmap=None):
+    if isinstance(frames, torch.Tensor):
+        frames = frames.detach().cpu().float().numpy()
+    if isinstance(preds, torch.Tensor):
+        preds = preds.cpu().detach().numpy()
+
+    batch_size = frames.shape[0]
+    for i in range(batch_size):
+        frame = frames[i]
+        pred = preds[i]
+
+        for dets in pred:
+            x1 = int(dets[0] * frame.shape[1])
+            y1 = int(dets[1] * frame.shape[0])
+            x2 = int(dets[2] * frame.shape[1])
+            y2 = int(dets[3] * frame.shape[0])
+            cls_ind = int(dets[5])
+
+            cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+            font = cv2.FONT_HERSHEY_SIMPLEX
+
+            if labelmap:
+                text = str(labelmap[cls_ind]['name'])
+            else:
+                text = str(cls_ind)
+
+            text_size = cv2.getTextSize(text, font, fontScale=0.5, thickness=2)[0]
+            coord = (x1 + 3, y1 + 7 + text_size[1])
+
+            cv2.putText(frame, text, coord, font, 0.5, (0, 0, 0), 2)
+        
+        if i == 0:
+            batch_image = frame.copy()
+        else:
+            batch_image = np.concatenate((batch_image, frame), axis=1)
+
+    cv2.imwrite(save_path, batch_image)
+    del batch_image
 
 def plot_images(images, targets, paths=None, fname='images.jpg', names=None, max_size=640, max_subplots=16):
     # Plot image grid with labels

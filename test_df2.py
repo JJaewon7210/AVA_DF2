@@ -12,12 +12,12 @@ from tqdm import tqdm
 from utils.general import coco80_to_coco91_class, check_dataset, check_file, check_img_size, check_requirements, \
     box_iou, non_max_suppression, scale_coords, xyxy2xywh, xywh2xyxy, set_logging, increment_path, colorstr, ConfigObject, box_iou_only_box1
 from utils.metrics import ap_per_class, ConfusionMatrix
-from utils.plots import plot_images, output_to_target, plot_study_txt
+from utils.plots import plot_images, un_normalized_images, plot_batch_image_from_preds, output_to_target, plot_study_txt, plot_labels, plot_results, plot_evolution, output_to_target
 from utils.torch_utils import select_device, time_synchronized, TracedModel
 from datasets.ava_dataset import AvaWithPseudoLabel
 from datasets.yolo_datasets import DeepFasion2WithPseudoLabel, InfiniteDataLoader, LoadImagesAndLabels
 from datasets.combined_dataset import CombinedDataset
-from model.YOWO import YOWO_CUSTOM
+from model.YOWO import YOWO_CUSTOM as Model
 
 def test_df2(
              opt,
@@ -113,6 +113,7 @@ def test_df2(
         img /= 255.0  # 0 - 255 to 0.0 - 1.0
         targets = targets.to(device)
         imgs_duplicated = img.unsqueeze(2).repeat((1, 1, opt.DATA.NUM_FRAMES, 1, 1))
+        keyframes = imgs_duplicated[:, :, -1, :, :] # keyframes
         nb, _c, _t, height, width = imgs_duplicated.shape  # batch size, channels, T, height, width
 
         with torch.no_grad():
@@ -123,7 +124,7 @@ def test_df2(
             out_bbox_infer, out_bbox_features = out_bboxs[0], out_bboxs[1]
             out_clo_infer, out_clo_features = out_clos[0], out_clos[1]
             out_act_infer, out_act_features = out_acts[0], out_acts[1]
-            out = torch.cat((out_bbox_infer, out_clo_infer), dim=2)
+            out_pred = torch.cat((out_bbox_infer, out_clo_infer), dim=2)
             t0 += time_synchronized() - t
 
 
@@ -131,7 +132,7 @@ def test_df2(
             targets[:, 2:] *= torch.Tensor([width, height, width, height]).to(device)  # to pixels
             lb = [targets[targets[:, 0] == i, 1:] for i in range(nb)] if save_hybrid else []  # for autolabelling
             t = time_synchronized()
-            out = non_max_suppression(out, conf_thres=conf_thres, iou_thres=iou_thres, labels=lb, multi_label=True)
+            out = non_max_suppression(out_pred, conf_thres=conf_thres, iou_thres=iou_thres, labels=lb, multi_label=True)
             t1 += time_synchronized() - t
 
         # Statistics per image
@@ -224,8 +225,11 @@ def test_df2(
         if plots and batch_i < 3:
             f = save_dir / f'test_df2_batch{batch_i}_labels.jpg'  # labels
             Thread(target=plot_images, args=(img, targets, paths, f, names), daemon=True).start()
+            
             f = save_dir / f'test_df2_batch{batch_i}_pred.jpg'  # predictions
-            Thread(target=plot_images, args=(img, output_to_target(out), paths, f, names), daemon=True).start()
+            keyframes = un_normalized_images(keyframes)
+            outs = non_max_suppression(out_pred, conf_thres=0.3, iou_thres=0.5)
+            Thread(target=plot_batch_image_from_preds, args=(keyframes.copy(), outs,str(f)), daemon=True).start()
 
     # Compute statistics
     stats = [np.concatenate(x, 0) for x in zip(*stats)]  # to numpy
@@ -301,8 +305,8 @@ if __name__ == '__main__':
     parser.add_argument('--weights', type=str, default='runs/train/AVA_DF22/weights/best.pt', help='model.pt path(s)')
     parser.add_argument('--batch-size', type=int, default=1, help='size of each image batch')
     parser.add_argument('--img-size', type=int, default=224, help='inference size (pixels)')
-    parser.add_argument('--conf-thres', type=float, default=0.1, help='object confidence threshold')
-    parser.add_argument('--iou-thres', type=float, default=0.1, help='IOU threshold for NMS')
+    parser.add_argument('--conf-thres', type=float, default=0.3, help='object confidence threshold')
+    parser.add_argument('--iou-thres', type=float, default=0.5, help='IOU threshold for NMS')
     parser.add_argument('--task', default='val', help='train, val, test, speed or study')
     parser.add_argument('--device', default='', help='cuda device, i.e. 0 or 0,1,2,3 or cpu')
     parser.add_argument('--single-cls', action='store_true', help='treat as single-class dataset')

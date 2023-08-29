@@ -9,6 +9,7 @@ import time
 from copy import deepcopy
 from threading import Thread
 from pathlib import Path
+import cv2
 
 # Related third party imports
 import yaml
@@ -23,13 +24,13 @@ from timm.optim import create_optimizer_v2
 # Local application/library specific imports
 from model.model import MTA_F3D_MODEL
 from model.YOWO import YOWO_CUSTOM as Model
-from utils.general import labels_to_class_weights, increment_path, init_seeds, \
+from utils.general import labels_to_class_weights, increment_path, labels_to_image_weights, init_seeds, \
     fitness, strip_optimizer, get_latest_run, check_dataset, check_file, check_git_status, check_img_size, \
     check_requirements, print_mutation, set_logging, colorstr, ConfigObject, non_max_suppression
 from utils.wandb_logging.wandb_utils import WandbLogger, check_wandb_resume
 from utils.scheduler import CosineAnnealingWarmupRestarts
 from utils.torch_utils import ModelEMA, select_device, intersect_dicts, torch_distributed_zero_first, is_parallel
-from utils.plots import plot_images, plot_labels, plot_results, plot_evolution, output_to_target
+from utils.plots import plot_images, read_labelmap, un_normalized_images, plot_batch_image_from_preds, output_to_target, plot_study_txt, plot_labels, plot_results, plot_evolution, output_to_target
 from utils.loss_ava import ComputeLoss,  WeightedMultiTaskLoss
 from datasets.ava_dataset import AvaWithPseudoLabel, Ava
 from datasets.yolo_datasets import DeepFasion2WithPseudoLabel, LoadImagesAndLabels, InfiniteDataLoader
@@ -67,7 +68,8 @@ def main(hyp, opt, device, tb_writer):
     cuda = device.type != 'cpu'
     init_seeds(1)
     opt_dict = opt.to_dict()  # data dict
-
+    labelmap_ava, _ = read_labelmap("D:/Data/AVA/annotations/ava_action_list_v2.2.pbtxt")
+    labelmap_df2, _ = read_labelmap("D:/Data/DeepFashion2/df2_list.pbtxt")
 
     # 4. Logging- Doing this before checking the dataset. Might update opt_dict
     opt.hyp = hyp  # add hyperparameters
@@ -90,18 +92,19 @@ def main(hyp, opt, device, tb_writer):
         logger.info('Transferred %g/%g items from %s' % (len(state_dict), len(model.state_dict()), weights))  # report
     else:
         model = Model(cfg=opt).to(device)
-
-    # 6. Dataset, Dataloader
+    
+    # 6. Dataset
     imgsz, imgsz_test = [check_img_size(x, 32) for x in opt.img_size]  # verify imgsz are gs-multiples
     dataset_df2 = LoadImagesAndLabels(path=opt.train, img_size=imgsz, batch_size=opt.batch_size, 
-                                             augment=True, hyp=hyp, rect=False, image_weights=opt.image_weights,
+                                             augment=False, hyp=hyp, rect=False, image_weights=opt.image_weights,
                                              cache_images=opt.cache_images, single_cls=opt.single_cls, 
                                              stride=32, pad=0.0, prefix='train: ')
-
+    # 6. Dataloader
     loader = torch.utils.data.DataLoader if opt.image_weights else InfiniteDataLoader
     dataloader = loader(dataset_df2, batch_size=opt.batch_size, pin_memory=True, num_workers=opt.workers, collate_fn=LoadImagesAndLabels.collate_fn)
     num_batch = len(dataloader)  # number of batches
     
+    # 6. Test dataset, dataloader
     if not opt.notest:
         logger.info('\n====> (For test) Loading LoadImagesAndLabels Dataset')
         testset_df2 = LoadImagesAndLabels(path=opt.val, img_size=imgsz_test, batch_size=opt.batch_size_test, 
@@ -117,12 +120,14 @@ def main(hyp, opt, device, tb_writer):
         logger.info('\n====> No test section during training model.')
         
     # 7. Optimizer, LR scheduler
+    accumulation_steps = 8
     optimizer = create_optimizer_v2(model.parameters(), opt='adam', lr=hyp['lr0'], momentum=hyp['momentum'], weight_decay=hyp['weight_decay'])
-    scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=hyp['lrmax'], epochs = epochs, steps_per_epoch=num_batch, div_factor=10)
+    
+    scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=hyp['lrmax'], total_steps=int(epochs * num_batch / accumulation_steps), div_factor=int(hyp['lrmax'] / hyp['lr0']))
     # scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=1, gamma=1)
 
     # EMA
-    ema = ModelEMA(model)
+    # ema = ModelEMA(model)
     
     # 8. Resume
     start_epoch, best_fitness = 0, 1e+9
@@ -132,9 +137,10 @@ def main(hyp, opt, device, tb_writer):
             optimizer.load_state_dict(ckpt['optimizer'])
             best_fitness = ckpt['best_fitness']
         # EMA
-        if ema and ckpt.get('ema'):
-            ema.ema.load_state_dict(ckpt['ema'].float().state_dict())
-            ema.updates = ckpt['updates']
+        # if ema and ckpt.get('ema'):
+        #     ema.ema.load_state_dict(ckpt['ema'].float().state_dict())
+        #     ema.updates = ckpt['updates']
+        
         # Results
         if ckpt.get('training_results') is not None:
             results_file.write_text(ckpt['training_results'])  # write results.txt
@@ -158,19 +164,26 @@ def main(hyp, opt, device, tb_writer):
                 f'Logging results to {save_dir}\n'
                 f'Starting training for {epochs} epochs...')
     LOSS = ComputeLoss(detector_head=model.head_clo, hyp=hyp)
-    WLOSS = WeightedMultiTaskLoss(num_tasks=3)
-    accumulation_steps = 4
-    
+
     # Start epoch ------------------------------------------------------------------------------------------------------
     for epoch in range(start_epoch, epochs):  
         logger.info(('\n' + '%10s' * 6) % ('gpu_mem', 'box', 'obj', 'clo', 'total', 'lr'))
         model.train()
+        model._freeze_modules()
         optimizer.zero_grad()
         pbar = enumerate(dataloader)
         pbar = tqdm(pbar, total=num_batch)  # progress bar
         mloss = torch.zeros(3, device='cpu')  # mean losses
         mtotal_loss = torch.zeros(1, device='cpu') # mean total_loss (sum of losses)
         
+        # Update image weights
+        if opt.image_weights:
+            maps = np.zeros(opt.nc)
+            cw = labels_to_class_weights(dataset_df2.labels, opt.nc)
+            cw = cw.cpu().numpy() * (1 - maps) ** 2 / opt.nc
+            iw = labels_to_image_weights(dataset_df2.labels, nc=opt.nc, class_weights=cw)
+            dataset_df2.indices = random.choices(range(dataset_df2.n), weights=iw, k=dataset_df2.n)
+
         # Start batch ----------------------------------------------------------------------------------------------------
         for i, (imgs, labels, paths, _shapes) in pbar:
             # Batch-01. Input data
@@ -187,6 +200,7 @@ def main(hyp, opt, device, tb_writer):
 
             # Concatenate 'imgs_duplicated' and 'clips' along the first dimension, which has the shape of [2B, 3, T, H, W]
             imgs_duplicated = imgs.unsqueeze(2).repeat((1, 1, opt.DATA.NUM_FRAMES, 1, 1))
+            img = imgs_duplicated[:, :, -1, :, :] # keyframe
             
             # Batch-02. Forward
             with amp.autocast(enabled=True):
@@ -196,24 +210,22 @@ def main(hyp, opt, device, tb_writer):
                 out_clo_infer, out_clo_features = out_clos[0], out_clos[1]
                 out_act_infer, out_act_features = out_acts[0], out_acts[1]
 
-                #TODO: Define the loss function
-                out_bbox_DF2 = out_bbox_features
-                out_clo_DF2 = out_clo_features
+                total_loss, losses = LOSS.forward_df2(
+                    p_cls = out_clo_features, 
+                    p_bbox = out_bbox_features, 
+                    targets = labels)
                 
-                _sum, losses = LOSS.forward_df2(p_cls=out_clo_DF2, p_bbox=out_bbox_DF2, targets=labels)
-                _lbox, _lobj, lclo, loss = torch.split(losses, 1)
-                # total_loss = WLOSS([_lbox, _lobj, lclo])
-                total_loss = lclo.to(device='cuda:0')
+                _lbox, _lobj, lclo, _ = torch.split(losses, 1)
                 
             # Batch-03. Backward
-            scaler.scale(total_loss).backward()
+            scaler.scale(lclo).backward()
             
             if (i+1) % accumulation_steps == 0:
                 scaler.step(optimizer)
                 scaler.update()
                 scheduler.step()
                 optimizer.zero_grad()
-                if ema: ema.update(model)
+                # if ema: ema.update(model)
 
             # Batch-04. Print
             loss_item = torch.tensor([_lbox, _lobj, lclo], device='cpu')
@@ -242,15 +254,20 @@ def main(hyp, opt, device, tb_writer):
             if (plots) and (cur_step % opt.log_step == 0):
                 plot_i = (cur_step // opt.log_step) % 4
                 f_clo = save_dir / f'train_batch_clo{plot_i}.jpg'  # filename
-                f_clol = save_dir / f'label_batch_clo{plot_i}.jpg'  # filename
+                f_act = save_dir / f'train_batch_act{plot_i}.jpg'  # filename
                 
-                # preds_clo = torch.cat((out_bbox_infer, out_clo_infer), dim=2)
+                img = un_normalized_images(img)
+                
                 preds_clo = torch.cat((out_bbox_infer, out_clo_infer), dim=2)
-                preds_clo = non_max_suppression(preds_clo, conf_thres=0.01, iou_thres=0.6)
-                preds_clo_new = output_to_target(preds_clo)
+                preds_clo = non_max_suppression(preds_clo, conf_thres=0.3, iou_thres=0.5)
+                Thread(target=plot_batch_image_from_preds, args=(img.copy(), preds_clo, str(f_clo), labelmap_df2), daemon=True).start()
+                
+                preds_act = torch.cat((out_bbox_infer, out_act_infer), dim=2)
+                preds_act = non_max_suppression(preds_act, conf_thres=0.5, iou_thres=0.5)
+                Thread(target=plot_batch_image_from_preds, args=(img.copy(), preds_act,str(f_act), labelmap_ava), daemon=True).start()
 
-                Thread(target=plot_images, args=(imgs, labels, None, f_clol), daemon=True).start()
-                Thread(target=plot_images, args=(imgs, preds_clo_new, None, f_clo), daemon=True).start()
+                # Thread(target=plot_images, args=(imgs, preds_clo_new, None, f_clo), daemon=True).start()
+                # Thread(target=plot_images, args=(imgs, preds_act_new, None, f_act), daemon=True).start()
             
             elif plots and i == 5 and wandb_logger.wandb:
                 wandb_logger.log({"Mosaics": [wandb_logger.wandb.Image(str(x), caption=x.name) for x in
@@ -261,7 +278,7 @@ def main(hyp, opt, device, tb_writer):
         # End epoch --------------------------------------------------------------------------------------------------------
     
         # Start write ------------------------------------------------------------------------------------------------------
-        ema.update_attr(model, include=['yaml', 'nc', 'hyp', 'gr', 'names', 'stride', 'class_weights'])
+        # ema.update_attr(model, include=['yaml', 'nc', 'hyp', 'gr', 'names', 'stride', 'class_weights'])
         final_epoch = epoch + 1 == epochs
         wandb_logger.current_epoch = epoch + 1        
         
@@ -317,8 +334,8 @@ def main(hyp, opt, device, tb_writer):
                     'best_fitness': best_fitness,
                     'training_results': results_file.read_text(),
                     'model': deepcopy(model.module if is_parallel(model) else model).half(),
-                    'ema': deepcopy(ema.ema).half(),
-                    'updates': ema.updates,
+                    # 'ema': deepcopy(ema.ema).half(),
+                    # 'updates': ema.updates,
                     'optimizer': optimizer.state_dict(),
                     'wandb_id': None}
 
