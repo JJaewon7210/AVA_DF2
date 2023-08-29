@@ -759,7 +759,8 @@ def non_max_suppression(prediction, conf_thres=0.25, iou_thres=0.45, classes=Non
             x[:, 5:] = x[:, 4:5] # for models with one class, cls_loss is 0 and cls_conf is always 0.5,
                                  # so there is no need to multiplicate.
         else:
-            x[:, 5:] *= x[:, 4:5]  # conf = obj_conf * cls_conf
+            # x[:, 5:] *= x[:, 4:5]  # conf = obj_conf * cls_conf
+            x[:, 5:] *= 1
 
         # Box (center x, center y, width, height) to (x1, y1, x2, y2)
         box = xywh2xyxy(x[:, :4])
