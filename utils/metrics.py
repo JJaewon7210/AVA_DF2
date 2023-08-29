@@ -118,7 +118,7 @@ class ConfusionMatrix:
         self.conf = conf
         self.iou_thres = iou_thres
 
-    def process_batch(self, detections, labels):
+    def process_batch(self, detections, labels, only_box1=False):
         """
         Return intersection-over-union (Jaccard index) of boxes.
         Both sets of boxes are expected to be in (x1, y1, x2, y2) format.
@@ -128,10 +128,20 @@ class ConfusionMatrix:
         Returns:
             None, updates confusion matrix accordingly
         """
+        if isinstance(detections, torch.Tensor):
+            detections = detections.detach().cpu().float()
+        if isinstance(labels, torch.Tensor):
+            labels = labels.detach().cpu().float()
+        
+        
         detections = detections[detections[:, 4] > self.conf]
         gt_classes = labels[:, 0].int()
         detection_classes = detections[:, 5].int()
-        iou = general.box_iou(labels[:, 1:], detections[:, :4])
+
+        if only_box1:
+            iou = general.box_iou_only_box1(labels[:, 1:], detections[:, :4], standard='box1')
+        else:
+            iou = general.box_iou(labels[:, 1:], detections[:, :4])
 
         x = torch.where(iou > self.iou_thres)
         if x[0].shape[0]:

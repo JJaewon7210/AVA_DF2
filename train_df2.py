@@ -1,11 +1,8 @@
 # Standard library imports
 import argparse
 import logging
-import platform
-import math
 import os
 import random
-import time
 from copy import deepcopy
 from threading import Thread
 from pathlib import Path
@@ -14,28 +11,21 @@ import cv2
 # Related third party imports
 import yaml
 import torch
-import matplotlib.pyplot as plt
 import numpy as np
 from torch.cuda import amp
-import torch.optim as optim
 from tqdm import tqdm
 from timm.optim import create_optimizer_v2
 
 # Local application/library specific imports
-from model.model import MTA_F3D_MODEL
+
 from model.YOWO import YOWO_CUSTOM as Model
 from utils.general import labels_to_class_weights, increment_path, labels_to_image_weights, init_seeds, \
-    fitness, strip_optimizer, get_latest_run, check_dataset, check_file, check_git_status, check_img_size, \
-    check_requirements, print_mutation, set_logging, colorstr, ConfigObject, non_max_suppression
+    get_latest_run, check_img_size, colorstr, ConfigObject, non_max_suppression
 from utils.wandb_logging.wandb_utils import WandbLogger, check_wandb_resume
-from utils.scheduler import CosineAnnealingWarmupRestarts
-from utils.torch_utils import ModelEMA, select_device, intersect_dicts, torch_distributed_zero_first, is_parallel
-from utils.plots import plot_images, read_labelmap, un_normalized_images, plot_batch_image_from_preds, output_to_target, plot_study_txt, plot_labels, plot_results, plot_evolution, output_to_target
-from utils.loss_ava import ComputeLoss,  WeightedMultiTaskLoss
-from datasets.ava_dataset import AvaWithPseudoLabel, Ava
-from datasets.yolo_datasets import DeepFasion2WithPseudoLabel, LoadImagesAndLabels, InfiniteDataLoader
-from datasets.combined_dataset import CombinedDataset
-from test_ava import test_ava
+from utils.torch_utils import ModelEMA, intersect_dicts, is_parallel
+from utils.plots import plot_images, read_labelmap, un_normalized_images, plot_batch_image_from_preds
+from utils.loss_ava import ComputeLoss
+from datasets.yolo_datasets import LoadImagesAndLabels, InfiniteDataLoader
 from test_df2 import test_df2
 
 logger = logging.getLogger(__name__)

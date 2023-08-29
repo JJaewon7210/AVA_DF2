@@ -9,14 +9,13 @@ import torch
 import yaml
 from tqdm import tqdm
 
-from utils.general import coco80_to_coco91_class, check_dataset, check_file, check_img_size, check_requirements, \
-    box_iou, non_max_suppression, scale_coords, xyxy2xywh, xywh2xyxy, set_logging, increment_path, colorstr, ConfigObject, box_iou_only_box1
+from utils.general import coco80_to_coco91_class, check_img_size, box_iou, non_max_suppression, \
+    scale_coords, xyxy2xywh, xywh2xyxy, set_logging, increment_path, ConfigObject, box_iou_only_box1
 from utils.metrics import ap_per_class, ConfusionMatrix
-from utils.plots import plot_images, un_normalized_images, plot_batch_image_from_preds, output_to_target, plot_study_txt, plot_labels, plot_results, plot_evolution, output_to_target
+from utils.plots import plot_images, read_labelmap, un_normalized_images, plot_batch_image_from_preds
 from utils.torch_utils import select_device, time_synchronized, TracedModel
-from datasets.ava_dataset import AvaWithPseudoLabel, Ava
-from datasets.yolo_datasets import DeepFasion2WithPseudoLabel, InfiniteDataLoader, LoadImagesAndLabels
-from datasets.combined_dataset import CombinedDataset
+from datasets.ava_dataset import Ava
+from datasets.yolo_datasets import InfiniteDataLoader
 from utils.loss_ava import extract_bounding_boxes, convert_one_hot_to_batch_class
 from model.YOWO import YOWO_CUSTOM
 
@@ -58,22 +57,20 @@ def test_ava(
         (save_dir / 'labels' if save_txt else save_dir).mkdir(parents=True, exist_ok=True)  # make dir
 
         # Load model
-        model = YOWO_CUSTOM(cfg=opt)
-        model = model.load_pretrain()
+        model = torch.load(weights, map_location=device)  # load FP32 model
         gs = 32  # grid size (max stride)
         imgsz = check_img_size(imgsz, s=gs)  # check img_size
-        # # Load model
-        # model = torch.load(weights, map_location=device)  # load FP32 model
-        # gs = 32  # grid size (max stride)
-        # imgsz = check_img_size(imgsz, s=gs)  # check img_size
         
         if trace:
             model = TracedModel(model, device, imgsz)
 
     # Load model
     if type(model) == dict:
-        model = model['ema']
-    
+        if 'ema' in model:
+            model = model['ema']
+        else:
+            model = model['model']
+
     # Half
     half = device.type != 'cpu' and half_precision  # half precision only supported on CUDA
     if half:
@@ -84,7 +81,8 @@ def test_ava(
     nc = 80
     iouv = torch.linspace(0.5, 0.95, 10).to(device)  # iou vector for mAP@0.5:0.95
     niou = iouv.numel()
-
+    labelmap_ava, _ = read_labelmap("D:/Data/AVA/annotations/ava_action_list_v2.2.pbtxt")
+    
     # Logging
     log_imgs = 0
     if wandb_logger and wandb_logger.wandb:
@@ -254,12 +252,13 @@ def test_ava(
         # Plot images
         if plots and batch_i < 3:
             f = save_dir / f'test_ava_batch{batch_i}_labels.jpg'  # labels
+            targets[:, 2:] *= torch.Tensor([width, height, width, height]).to(device)  # to pixels
             Thread(target=plot_images, args=(img, targets, paths, f, names), daemon=True).start()
             
             f = save_dir / f'test_ava_batch{batch_i}_pred.jpg'  # predictions
             keyframes = un_normalized_images(img)
             outs = non_max_suppression(out_pred, conf_thres=0.5, iou_thres=0.5)
-            Thread(target=plot_batch_image_from_preds, args=(keyframes.copy(), outs,str(f)), daemon=True).start()
+            Thread(target=plot_batch_image_from_preds, args=(keyframes.copy(), outs, str(f), labelmap_ava), daemon=True).start()
 
     # Compute statistics
     stats = [np.concatenate(x, 0) for x in zip(*stats)]  # to numpy
@@ -342,7 +341,7 @@ if __name__ == '__main__':
     parser.add_argument('--single-cls', action='store_true', help='treat as single-class dataset')
     parser.add_argument('--augment', action='store_true', help='augmented inference')
     parser.add_argument('--verbose', action='store_true', help='report mAP by class')
-    parser.add_argument('--save-txt', action='store_true', help='save results to *.txt')
+    parser.add_argument('--save-txt', default= True, action='store_true', help='save results to *.txt')
     parser.add_argument('--save-hybrid', action='store_true', help='save label+prediction hybrid results to *.txt')
     parser.add_argument('--save-conf', action='store_true', help='save confidences in --save-txt labels')
     parser.add_argument('--save-json', action='store_true', help='save a cocoapi-compatible JSON results file')

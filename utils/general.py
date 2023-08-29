@@ -542,9 +542,9 @@ def box_iou_only_box1(box1, box2, standard='box1'):
     # inter(N,M) = (rb(N,M,2) - lt(N,M,2)).clamp(0).prod(2)
     inter = (torch.min(box1[:, None, 2:], box2[:, 2:]) - torch.max(box1[:, None, :2], box2[:, :2])).clamp(0).prod(2)
     if standard == 'box1':
-        return inter / (area1[:, None])  # iou = inter / (area1 + area2 - inter)
+        return inter / (area1[:, None] + area2 - inter - area2 + inter)  # iou = inter / (area1 + area2 - inter)
     elif standard == 'box2':
-        return inter / (area2 )  # iou = inter / (area1 + area2 - inter)
+        return inter / (area1[:, None] + area2 - inter - area1[:, None] + inter)  # iou = inter / (area1 + area2 - inter)
     else:
         raise ValueError("Invalid value for 'standard'. Supported options are 'box1' and 'box2'.")
 
@@ -1023,8 +1023,8 @@ class ConfigObject:
     def merge(self, other):
         for key, value in other.__dict__.items():
             if key in self.__dict__:
-                print(f"Warning: Overwriting attribute {key}")
-            setattr(self, key, value) 
+                print(f"Warning: Overwriting attribute {key} -> {self.__dict__[key]} -> {value}")
+            setattr(self, key, value)
 
 def convert_one_hot_to_batch_class(A):
     """
