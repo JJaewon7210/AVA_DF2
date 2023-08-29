@@ -248,14 +248,14 @@ class Ava(torch.utils.data.Dataset):
             )
 
         # # Normalize images by mean and std.
-        # imgs = [
-        #     cv2_transform.color_normalization(
-        #         img,
-        #         np.array(self._data_mean, dtype=np.float32),
-        #         np.array(self._data_std, dtype=np.float32),
-        #     )
-        #     for img in imgs
-        # ]
+        imgs = [
+            cv2_transform.color_normalization(
+                img,
+                np.array(self._data_mean, dtype=np.float32),
+                np.array(self._data_std, dtype=np.float32),
+            )
+            for img in imgs
+        ]
 
         # Concat list of images to single ndarray.
         imgs = np.concatenate(
