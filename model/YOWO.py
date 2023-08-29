@@ -137,15 +137,22 @@ class YOWO_CUSTOM(YOWO):
         self.anchors = cfg.MODEL.ANCHORS[0]
         self.na = len(self.anchors) // 2 # number of anchors
         self.nl = len(cfg.MODEL.ANCHORS) # number of layers
+        self.load_pretrain()
         
-        self = self.load_pretrain()
-        
-        self.detect_cfam1 = CFAMBlock(1024, 1024)
+        self.detect_cfam1 = CFAMBlock(425, 1024)
         self.detect_cfam2 = CFAMBlock(1024, 1024)
         self.head_clo = Detect(no = cfg.nc,
                                 anchors = cfg.MODEL.ANCHORS,
                                 ch = [1024]*len(cfg.MODEL.ANCHORS),
                                 bbox_head=False)
+        self.bbox_clo = Detect(no = 4+1,
+                                anchors = cfg.MODEL.ANCHORS,
+                                ch = [1024]*len(cfg.MODEL.ANCHORS),
+                                bbox_head=True)
+        self.heads = Detect(no = 4+1+cfg.nc,
+                                anchors = cfg.MODEL.ANCHORS,
+                                ch = [1024]*len(cfg.MODEL.ANCHORS),
+                                bbox_head=True)
 
     def forward(self, x):
         # input
@@ -171,14 +178,18 @@ class YOWO_CUSTOM(YOWO):
         out_act_infer = out_infer[..., 5:]
 
         ## DF2
-        x = self.detect_cfam1(x)
+        x = self.detect_cfam1(x_2d)
         x = self.detect_cfam2(x)
-        out_clos = self.head_clo([x]) # 2 5 5
+        outs = self.heads([x])
         
+        # -> pred & infer
+        outs_infer, outs_pred = outs[0], outs[1]
+        out_clo_infer = outs_infer[..., 5:]
+        out_clo_pred = outs_pred[0][..., 5:]
         
-        return [out_bbox_infer, [out_bbox_pred]], out_clos, [out_act_infer, [out_act_pred]]
+        return [out_bbox_infer, [out_bbox_pred]], [out_clo_infer, [out_clo_pred]], [out_act_infer, [out_act_pred]]
         
-    def load_pretrain(self, path=None, freeze=True):
+    def load_pretrain(self, path=None, freeze=False):
         if path:
             pt_YOWO = torch.load(path)
         else:
@@ -232,18 +243,24 @@ class YOWO_CUSTOM(YOWO):
         
         grid_x = torch.linspace(0, w-1, w).repeat(h,1).repeat(batch*num_anchors, 1, 1).view(batch*num_anchors*h*w).cuda()
         grid_y = torch.linspace(0, h-1, h).repeat(w,1).t().repeat(batch*num_anchors, 1, 1).view(batch*num_anchors*h*w).cuda()
-        xs = (torch.sigmoid(output[0]) + grid_x) /w * img_size
-        ys = (torch.sigmoid(output[1]) + grid_y) /h * img_size
+        # xs = (torch.sigmoid(output[0]) + grid_x) /w * img_size
+        # ys = (torch.sigmoid(output[1]) + grid_y) /h * img_size
+        xs = (torch.sigmoid(output[0]) + grid_x) /w
+        ys = (torch.sigmoid(output[1]) + grid_y) /h
 
         anchor_w = torch.Tensor(anchors).view(num_anchors, anchor_step).index_select(1, torch.LongTensor([0]))
         anchor_h = torch.Tensor(anchors).view(num_anchors, anchor_step).index_select(1, torch.LongTensor([1]))
         anchor_w = anchor_w.repeat(batch, 1).repeat(1, 1, h*w).view(batch*num_anchors*h*w).cuda()
         anchor_h = anchor_h.repeat(batch, 1).repeat(1, 1, h*w).view(batch*num_anchors*h*w).cuda()
-        ws = (torch.exp(output[2]) * anchor_w) 
-        hs = (torch.exp(output[3]) * anchor_h) 
+        # ws = torch.exp(output[2]) * anchor_w
+        # hs = torch.exp(output[3]) * anchor_h
+        ws = torch.exp(output[2]) * anchor_w / img_size
+        hs = torch.exp(output[3]) * anchor_h / img_size
 
         det_confs = torch.sigmoid(output[4])
-        cls_confs = torch.nn.Softmax()(torch.autograd.Variable(output[5:5+num_classes].transpose(0,1))).data
+        cls_confs1 = torch.nn.Softmax()(torch.autograd.Variable(output[5:5+14].transpose(0,1))).data
+        cls_confs2 = torch.sigmoid(torch.autograd.Variable(output[5+14:5+num_classes].transpose(0,1))).data
+        cls_confs = torch.cat([cls_confs1, cls_confs2], dim=1)
 
         xs = xs.view(batch, num_anchors*h*w, 1)
         ys = ys.view(batch, num_anchors*h*w, 1)
@@ -254,7 +271,7 @@ class YOWO_CUSTOM(YOWO):
 
         output = torch.cat([xs, ys, ws, hs, det_confs, cls_confs], dim=2)
         
-        return output
+        return output.detach()
 
 
 if __name__ == '__main__':
