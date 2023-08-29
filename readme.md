@@ -10,6 +10,7 @@
 - [x] 훈련 및 테스트 결과 train_loss는 떨어지지만 val_loss는 0인 현상 발견 (기존 모델로는 해결 안 됨. Update: 2023-08-10)
 - [x] YOWO (freeze) 후 Head를 붙여서 실험 후 성공 (Update: 2023-08-14)
 - [x] loss 계산 시 target box 와 anchor의 매칭 가능성 (100%)로 확대 + cls loss만 적용 (Update: 2023-08-18)
+- [x] 훈련 중 모델의 output 확인할 수 있는 모니터링 기능 보완 (Update: 2023-08-29)
 - [ ] YOWO에서는 NMS 시 class 가 달라도 IoU가 threshold 이상이면 없애는 조금은 다른 로직을 사용하는 것을 발견.. (정석으로 갈지, YOWO대로 갈지 고민중)
 
 ## Model Performance and Details
