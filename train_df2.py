@@ -330,6 +330,7 @@ def main(hyp, opt, device, tb_writer):
                     'wandb_id': None}
 
             # Save last, best and delete
+            last = wdir / f'epoch{str(epoch)}.pt'
             torch.save(ckpt, last)
             if best_fitness == fi:
                 torch.save(ckpt, best)

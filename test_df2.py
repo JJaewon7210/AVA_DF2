@@ -23,8 +23,8 @@ def test_df2(
          weights=None,
          batch_size=32,
          imgsz=640,
-         conf_thres=0.01,
-         iou_thres=0.6,  # for NMS
+         conf_thres=0.3,
+         iou_thres=0.5,  # for NMS
          save_json=False,
          single_cls=False,
          augment=False,
@@ -111,7 +111,7 @@ def test_df2(
     p, r, f1, mp, mr, map50, map, t0, t1 = 0., 0., 0., 0., 0., 0., 0., 0., 0.
     loss = torch.zeros(3, device=device)
     jdict, stats, ap, ap_class, wandb_images = [], [], [], [], []
-    for batch_i, (img, targets, paths, shapes) in enumerate(tqdm(islice(dataloader, 15077, None), desc=s)):
+    for batch_i, (img, targets, paths, shapes) in enumerate(tqdm(dataloader, desc=s)):
         img = img.to(device, non_blocking=True)
         img = img.half() if half else img.float()  # uint8 to fp16/32
         img /= 255.0  # 0 - 255 to 0.0 - 1.0
@@ -306,7 +306,7 @@ def test_df2(
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(prog='test.py')
-    parser.add_argument('--weights', type=str, default='runs/train/AVA_DF2/weights/best.pt', help='model.pt path(s)')
+    parser.add_argument('--weights', type=str, default='runs/train/AVA_DF22/weights/last.pt', help='model.pt path(s)')
     parser.add_argument('--batch-size', type=int, default=2, help='size of each image batch')
     parser.add_argument('--img-size', type=int, default=224, help='inference size (pixels)')
     parser.add_argument('--conf-thres', type=float, default=0.3, help='object confidence threshold')
