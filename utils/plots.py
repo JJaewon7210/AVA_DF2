@@ -147,7 +147,7 @@ def un_normalized_images(images, mean=None, std=None, convert_cv2=True):
 
     return images
 
-def plot_batch_image_from_preds(frames, preds, save_path='batch_image.jpg', labelmap=None):
+def plot_batch_image_from_preds(frames, preds, save_path='batch_image.jpg', labelmap=None, reshape_size=(224,224)):
     if isinstance(frames, torch.Tensor):
         frames = frames.detach().cpu().float().numpy()
     if isinstance(preds, torch.Tensor):
@@ -156,16 +156,18 @@ def plot_batch_image_from_preds(frames, preds, save_path='batch_image.jpg', labe
     batch_size = frames.shape[0]
     for i in range(batch_size):
         frame = frames[i]
+        frame = cv2.resize(frame, reshape_size)
+        
         pred = preds[i]
 
-        for dets in pred:
+        for j, dets in enumerate(pred):
             x1 = int(dets[0] * frame.shape[1])
             y1 = int(dets[1] * frame.shape[0])
             x2 = int(dets[2] * frame.shape[1])
             y2 = int(dets[3] * frame.shape[0])
             cls_ind = int(dets[5])
-
-            cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+            random_color = (random.randint(0, 255), random.randint(0, 255), random.randint(0, 255))
+            cv2.rectangle(frame, (x1, y1), (x2, y2), random_color, 2)
             font = cv2.FONT_HERSHEY_SIMPLEX
 
             if labelmap:
@@ -174,9 +176,9 @@ def plot_batch_image_from_preds(frames, preds, save_path='batch_image.jpg', labe
                 text = str(cls_ind)
 
             text_size = cv2.getTextSize(text, font, fontScale=0.5, thickness=2)[0]
-            coord = (x1 + 3, y1 + 7 + text_size[1])
+            coord = (x1 + 3, y1 + 7 + j*10 + text_size[1]*3)
 
-            cv2.putText(frame, text, coord, font, 0.5, (0, 0, 0), 2)
+            cv2.putText(frame, text, coord, font, 0.5, random_color, 2)
         
         if i == 0:
             batch_image = frame.copy()
