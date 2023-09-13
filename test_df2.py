@@ -11,7 +11,7 @@ import yaml
 from tqdm import tqdm
 
 from utils.general import coco80_to_coco91_class, check_img_size, non_max_suppression, \
-    scale_coords, xyxy2xywh, xywh2xyxy, set_logging, increment_path, ConfigObject, box_iou_only_box1
+    scale_coords, xyxy2xywh, xywh2xyxy, set_logging, increment_path, ConfigObject, box_iou_only_box1, box_iou
 from utils.metrics import ap_per_class, ConfusionMatrix
 from utils.plots import plot_images, read_labelmap, un_normalized_images, plot_batch_image_from_preds
 from utils.torch_utils import select_device, time_synchronized, TracedModel
@@ -23,7 +23,7 @@ def test_df2(
          weights=None,
          batch_size=32,
          imgsz=640,
-         conf_thres=0.3,
+         conf_thres=0.5,
          iou_thres=0.5,  # for NMS
          save_json=False,
          single_cls=False,
@@ -123,11 +123,12 @@ def test_df2(
         with torch.no_grad():
             # Run model
             t = time_synchronized()
-            out_bboxs, out_clos, out_acts = model(imgs_duplicated)
+            out_bboxs, out_clos = model(imgs_duplicated)
+            # out_bboxs, out_clos, out_acts = model(imgs_duplicated)
             
             out_bbox_infer, out_bbox_features = out_bboxs[0], out_bboxs[1]
             out_clo_infer, out_clo_features = out_clos[0], out_clos[1]
-            out_act_infer, out_act_features = out_acts[0], out_acts[1]
+            # out_act_infer, out_act_features = out_acts[0], out_acts[1]
             out_pred = torch.cat((out_bbox_infer, out_clo_infer), dim=2)
             t0 += time_synchronized() - t
 
@@ -135,7 +136,7 @@ def test_df2(
             # Run NMS
             lb = [targets[targets[:, 0] == i, 1:] for i in range(nb)] if save_hybrid else []  # for autolabelling
             t = time_synchronized()
-            out = non_max_suppression(out_pred, conf_thres=conf_thres, iou_thres=iou_thres, labels=lb, multi_label=True)
+            out = non_max_suppression(out_pred, conf_thres=conf_thres, iou_thres=iou_thres, cls_thres=0.25, labels=lb, multi_label=True)
             t1 += time_synchronized() - t
 
         # Statistics per image
@@ -198,7 +199,8 @@ def test_df2(
                 tbox = xywh2xyxy(labels[:, 1:5])
                 # scale_coords(img[si].shape[1:], tbox, shapes[si][0], shapes[si][1])  # native-space labels
                 if plots:
-                    confusion_matrix.process_batch(predn, torch.cat((labels[:, 0:1], tbox), 1), only_box1=True)
+                    confusion_matrix.process_batch(predn, torch.cat((labels[:, 0:1], tbox), 1), only_box1=False)
+                    # confusion_matrix.process_batch(predn, torch.cat((labels[:, 0:1], tbox), 1), only_box1=True)
 
                 # Per target class
                 for cls in torch.unique(tcls_tensor):
@@ -208,8 +210,8 @@ def test_df2(
                     # Search for detections
                     if pi.shape[0]:
                         # Prediction to target ious
-                        # ious, i = box_iou(predn[pi, :4], tbox[ti]).max(1) 
-                        ious, i = box_iou_only_box1(predn[pi, :4], tbox[ti], standard='box2').max(1)  # best ious, indices of the target boxes that have the highest IoU with each prediction.
+                        ious, i = box_iou(predn[pi, :4], tbox[ti]).max(1) 
+                        # ious, i = box_iou_only_box1(predn[pi, :4], tbox[ti], standard='box2').max(1)  # best ious, indices of the target boxes that have the highest IoU with each prediction.
                         # Append detections
                         detected_set = set()
                         for j in (ious > iouv[0]).nonzero(as_tuple=False):
@@ -232,8 +234,7 @@ def test_df2(
             
             f = save_dir / f'test_df2_batch{batch_i}_pred.jpg'  # predictions
             keyframes = un_normalized_images(keyframes)
-            outs = non_max_suppression(out_pred, conf_thres=0.3, iou_thres=0.5)
-            Thread(target=plot_batch_image_from_preds, args=(keyframes.copy(), outs,str(f), labelmap_df2), daemon=True).start()
+            Thread(target=plot_batch_image_from_preds, args=(keyframes.copy(), out,str(f), labelmap_df2), daemon=True).start()
 
     # Compute statistics
     stats = [np.concatenate(x, 0) for x in zip(*stats)]  # to numpy
@@ -306,8 +307,8 @@ def test_df2(
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(prog='test.py')
-    parser.add_argument('--weights', type=str, default='runs/train/AVA_DF22/weights/last.pt', help='model.pt path(s)')
-    parser.add_argument('--batch-size', type=int, default=2, help='size of each image batch')
+    parser.add_argument('--weights', type=str, default='runs/train/augment_True_feature_x/weights/epoch49.pt', help='model.pt path(s)')
+    parser.add_argument('--batch-size', type=int, default=1, help='size of each image batch')
     parser.add_argument('--img-size', type=int, default=224, help='inference size (pixels)')
     parser.add_argument('--conf-thres', type=float, default=0.3, help='object confidence threshold')
     parser.add_argument('--iou-thres', type=float, default=0.5, help='IOU threshold for NMS')
