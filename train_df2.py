@@ -194,11 +194,12 @@ def main(hyp, opt, device, tb_writer):
             
             # Batch-02. Forward
             with amp.autocast(enabled=True):
-                out_bboxs, out_clos, out_acts = model(imgs_duplicated)
+                out_bboxs, out_clos = model(imgs_duplicated)
+                # out_bboxs, out_clos, out_acts = model(imgs_duplicated)
                 
                 out_bbox_infer, out_bbox_features = out_bboxs[0], out_bboxs[1]
                 out_clo_infer, out_clo_features = out_clos[0], out_clos[1]
-                out_act_infer, out_act_features = out_acts[0], out_acts[1]
+                # out_act_infer, out_act_features = out_acts[0], out_acts[1]
 
                 total_loss, losses = LOSS.forward_df2(
                     p_cls = out_clo_features, 
@@ -252,9 +253,9 @@ def main(hyp, opt, device, tb_writer):
                 preds_clo = non_max_suppression(preds_clo, conf_thres=0.3, iou_thres=0.5)
                 Thread(target=plot_batch_image_from_preds, args=(img.copy(), preds_clo, str(f_clo), labelmap_df2), daemon=True).start()
                 
-                preds_act = torch.cat((out_bbox_infer, out_act_infer), dim=2)
-                preds_act = non_max_suppression(preds_act, conf_thres=0.5, iou_thres=0.5)
-                Thread(target=plot_batch_image_from_preds, args=(img.copy(), preds_act,str(f_act), labelmap_ava), daemon=True).start()
+                # preds_act = torch.cat((out_bbox_infer, out_act_infer), dim=2)
+                # preds_act = non_max_suppression(preds_act, conf_thres=0.5, iou_thres=0.5)
+                # Thread(target=plot_batch_image_from_preds, args=(img.copy(), preds_act,str(f_act), labelmap_ava), daemon=True).start()
 
                 # Thread(target=plot_images, args=(imgs, preds_clo_new, None, f_clo), daemon=True).start()
                 # Thread(target=plot_images, args=(imgs, preds_act_new, None, f_act), daemon=True).start()
