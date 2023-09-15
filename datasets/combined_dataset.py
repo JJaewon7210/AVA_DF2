@@ -80,8 +80,7 @@ class CombinedDataset(Dataset):
         cls = np.stack([item["cls"] for item in item2_batch])
         boxes = np.stack([item["boxes"] for item in item2_batch])
         feature_s = np.stack([item["feature_s"] for item in item2_batch])
-        feature_m = np.stack([item["feature_m"] for item in item2_batch])
-        feature_l = np.stack([item["feature_l"] for item in item2_batch])
+
         # Explanation of variables in item2_batch:
         #   - clips (torch.float32): Video clips data with shape [B, 3, T, H, W].
         #   - cls (np.array, dtype('float32')): Array of class data with shape [B, 50, 80].
@@ -92,7 +91,7 @@ class CombinedDataset(Dataset):
         #   - feature_l (np.array, dtype('float16')): Array of large feature data with shape [B, 3, 28, 28, 18].
 
         # Stack the processed item2_batch components into tensors
-        item2_batchs = (clips, cls, boxes, feature_s, feature_m, feature_l)
+        item2_batchs = (clips, cls, boxes, feature_s)
         # Explanation: Stack individual components into tensors and create the final item2_batchs tuple.
 
         return item1_batchs, item2_batchs

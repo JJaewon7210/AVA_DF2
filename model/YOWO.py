@@ -139,7 +139,8 @@ class YOWO_CUSTOM(YOWO):
         self.nl = len(cfg.MODEL.ANCHORS) # number of layers
         self.load_pretrain()
         
-        self.detect_cfam1 = CFAMBlock(425, 1024)
+        self.detect_cfam1 = CFAMBlock(425, 1024) # for feature x2d
+        # self.detect_cfam1 = CFAMBlock(1024, 1024) # for feature x
         self.detect_cfam2 = CFAMBlock(1024, 1024)
         self.head_clo = Detect(no = cfg.nc,
                                 anchors = cfg.MODEL.ANCHORS,
@@ -169,7 +170,7 @@ class YOWO_CUSTOM(YOWO):
         
         ## AVA
         out = self.conv_final(x) # bs, 85*na, 7, 7
-        out_pred = out.view(x.shape[0], self.na, 5+80, 7, 7).permute(0, 1, 3, 4, 2)
+        out_pred = out.view(x.shape[0], self.na, 5+80, 7, 7).permute(0, 1, 3, 4, 2) # [B, na, 7, 7, 85]
         out_bbox_pred = out_pred[..., :5]
         out_act_pred = out_pred[..., 5:]
         
@@ -178,12 +179,13 @@ class YOWO_CUSTOM(YOWO):
         out_act_infer = out_infer[..., 5:]
 
         ## DF2
-        x = self.detect_cfam1(x_2d)
+        x = self.detect_cfam1(x_2d) # for feature x2d
+        # x = self.detect_cfam1(x) # for feature x
         x = self.detect_cfam2(x)
         outs = self.heads([x])
         
         # -> pred & infer
-        outs_infer, outs_pred = outs[0], outs[1]
+        outs_infer, outs_pred = outs[0], outs[1] # out_pred: # [B, na, 7, 7, 5+nc]
         out_clo_infer = outs_infer[..., 5:]
         out_clo_pred = outs_pred[0][..., 5:]
         

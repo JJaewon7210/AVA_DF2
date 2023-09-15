@@ -169,10 +169,13 @@ class ComputeLoss:
             BCEcls_ava, BCEcls_df2, BCEobj = FocalLoss(BCEcls_ava, g), FocalLoss(BCEcls_df2, g), FocalLoss(BCEobj, g)
         
         self.BCEcls_ava, self.BCEcls_df2, self.BCEobj, self.hyp = BCEcls_ava, BCEcls_df2, BCEobj, hyp
+        self.mse_loss = nn.MSELoss()
         self.anchors = self.anchors.to(device)
     
-    def forward_ava(self, p_cls, p_bbox, t_cls, t_bbox):
+    def forward_ava(self, p_act, p_bbox, t_cls, t_bbox, p_clo, pseudo_cloth):
         self.nc = 80
+        
+        # Set the prediction and target
         t_cls = convert_one_hot_to_batch_class(t_cls)
         t_bbox = extract_bounding_boxes(t_bbox)
         
@@ -180,22 +183,41 @@ class ComputeLoss:
             t_bbox = torch.Tensor(t_bbox)
             t_cls = torch.Tensor(t_cls)
             
+        p = [torch.cat((bbox, cls), dim=4) for bbox, cls in zip(p_bbox, p_act)]
         targets = torch.cat((t_cls, t_bbox[..., 1:]), dim=1).to('cuda:0')
-        
-        p = [torch.cat((bbox, cls), dim=4) for bbox, cls in zip(p_bbox, p_cls)]
 
-        total_loss, loss_items = self.__call__(p, targets, self.BCEcls_ava)
+        # Calculate the loss
+        _total_loss, loss_items = self.__call__(p, targets, self.BCEcls_ava)
+        lbox, lobj, lact, _sum = torch.split(loss_items, 1)
+        feature_loss  = self.mse_jaewon(p_clo, pseudo_cloth)
         
-        return total_loss, loss_items
+        return lbox, lobj, lact, feature_loss
     
-    def forward_df2(self, p_cls, p_bbox, targets):
+    def forward_df2(self, p_clo, p_bbox, pseudo_bbox, targets):
         self.nc = 13
-        p = [torch.cat((bbox, cls), dim=4) for bbox, cls in zip(p_bbox, p_cls)]
-        targets = targets.to('cuda:0')
-        total_loss, loss_items = self.__call__(p, targets, self.BCEcls_df2)
         
-        return total_loss, loss_items
+        # Set the prediction and target
+        p = [torch.cat((bbox, cls), dim=4) for bbox, cls in zip(p_bbox, p_clo)]
+        targets = targets.to('cuda:0')
+        
+        # Calculate the loss
+        _total_loss, loss_items = self.__call__(p, targets, self.BCEcls_df2)
+        lbox, lobj, lclo, _sum = torch.split(loss_items, 1)
+        feature_loss = self.mse_jaewon(p_bbox, pseudo_bbox)
+        
+        return lbox, lobj, lclo, feature_loss
 
+    def mse_jaewon(self, preds, target):
+        '''
+        preds : list of torch.tensor
+        target: torch.tensor
+        '''
+        assert preds[0].shape == target.shape, "Mismatch in shape for calculating MSE loss"
+        device = target.device
+        loss = torch.zeros(1, device=device)
+        for pred in preds:
+            loss += self.mse_loss(pred, target)
+        return loss
 
     def __call__(self, p, targets, BCEcls):  # predictions, targets, model
         device = targets.device
@@ -285,7 +307,11 @@ class ComputeLoss:
             if nt:
                 # Matches
                 r = t[:, :, 4:6] / anchors[:, None]  # wh ratio # na, nt, 2
-                j = torch.max(r, 1. / r).max(2)[0] < 50  # select all anchor boxes
+                
+                # TODO: select the all anchor boxes, when we calculate the loss between p_clo and pseudo_clo
+                # select the specific anchor boxes using true boxes, when the target is human bbox (AVA dataset)
+                
+                j = torch.max(r, 1. / r).max(2)[0] < 50  # select all anchor boxes 
                 # j = torch.max(r, 1. / r).max(2)[0] < self.hyp['anchor_t']  # compare # na, nt
                 # j = wh_iou(anchors, t[:, 4:6]) > model.hyp['iou_t']  # iou(3,n)=wh_iou(anchors(3,2), gwh(n,2))
                 t = t[j]  # filter # na*nt - filter, 7

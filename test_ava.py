@@ -24,8 +24,8 @@ def test_ava(
          weights=None,
          batch_size=32,
          imgsz=640,
-         conf_thres=0.01,
-         iou_thres=0.6,  # for NMS
+         conf_thres=0.5,
+         iou_thres=0.5,  # for NMS
          save_json=False,
          single_cls=False,
          augment=False,
@@ -148,16 +148,14 @@ def test_ava(
             out_bboxs, out_clos, out_acts = model(clips)
             
             out_bbox_infer, out_bbox_features = out_bboxs[0], out_bboxs[1]
-            out_clo_infer, out_clo_features = out_clos[0], out_clos[1]
+            # out_clo_infer, out_clo_features = out_clos[0], out_clos[1]
             out_act_infer, out_act_features = out_acts[0], out_acts[1]
             out_pred = torch.cat((out_bbox_infer, out_act_infer), dim=-1)
-            
-            
             t0 += time_synchronized() - t
 
 
             # Run NMS
-            targets[:, 2:] *= torch.Tensor([width, height, width, height]).to(device)  # to pixels
+            targets[:, 2:] *= torch.Tensor([width, height, width, height]).to(device)  # to pixels # TODO: check the target scale
             lb = [targets[targets[:, 0] == i, 1:] for i in range(nb)] if save_hybrid else []  # for autolabelling
             t = time_synchronized()
             out = non_max_suppression(out_pred, conf_thres=conf_thres, iou_thres=iou_thres, labels=lb, multi_label=False)
@@ -178,11 +176,11 @@ def test_ava(
 
             # Predictions
             predn = pred.clone()
-            scale_coords(img[si].shape[1:], predn[:, :4], (h0[si], w0[si]))  # native-space pred
+            scale_coords(img[si].shape[1:], predn[:, :4], (h0[si], w0[si]))  # native-space pred # TODO: check the scale
 
             # Append to text file
             if save_txt:
-                gn = torch.tensor((h0[si], w0[si]))[[1, 0, 1, 0]]  # normalization gain whwh
+                gn = torch.tensor((h0[si], w0[si]))[[1, 0, 1, 0]]  # normalization gain whwh # TODO: check the scale
                 for *xyxy, conf, cls in predn.tolist():
                     xywh = (xyxy2xywh(torch.tensor(xyxy).view(1, 4)) / gn).view(-1).tolist()  # normalized xywh
                     line = (cls, *xywh, conf) if save_conf else (cls, *xywh)  # label format
@@ -250,15 +248,14 @@ def test_ava(
             stats.append((correct.cpu(), pred[:, 4].cpu(), pred[:, 5].cpu(), tcls))
 
         # Plot images
-        if plots and batch_i < 3:
+        if plots and batch_i < 10:
             f = save_dir / f'test_ava_batch{batch_i}_labels.jpg'  # labels
-            targets[:, 2:] *= torch.Tensor([width, height, width, height]).to(device)  # to pixels
+            targets[:, 2:] *= torch.Tensor([width, height, width, height]).to(device)  # to pixels # TODO: check the scale
             Thread(target=plot_images, args=(img, targets, paths, f, names), daemon=True).start()
             
             f = save_dir / f'test_ava_batch{batch_i}_pred.jpg'  # predictions
             keyframes = un_normalized_images(img)
-            outs = non_max_suppression(out_pred, conf_thres=0.5, iou_thres=0.5)
-            Thread(target=plot_batch_image_from_preds, args=(keyframes.copy(), outs, str(f), labelmap_ava), daemon=True).start()
+            Thread(target=plot_batch_image_from_preds, args=(keyframes.copy(), out, str(f), labelmap_ava), daemon=True).start()
 
     # Compute statistics
     stats = [np.concatenate(x, 0) for x in zip(*stats)]  # to numpy

@@ -419,9 +419,7 @@ class AvaWithPseudoLabel(Ava):
                 is `channel` x `num frames` x `height` x `width`.
             cls (ndarray): the label for correspond boxes for the current video.
             boxes (ndarray): (x, y, w, h) in relative position of image
-            feature_s (tensor): the feature from YOLOv7 at small detector head (resolution: 7x7)
-            feature_m (tensor): the feature from YOLOv7 at medium detector head (resolution: 14x14)
-            feature_l (tensor): the feature from YOLOv7 at large detector head (resolution: 28x28)
+            feature_s (tensor): the feature from YOLOv7 at detector head (resolution: 7x7)
         """
         # Get the original dataset output
         ret = super().__getitem__(idx)
@@ -434,13 +432,9 @@ class AvaWithPseudoLabel(Ava):
         _directory = os.path.dirname(keyframe_info).replace('frames', 'frame_features')
         _filename = os.path.splitext(os.path.basename(keyframe_info))[0]
 
-        feature_s  = np.load(os.path.join(_directory, _filename, f"{_filename}_3x7x7x13.npy"))
-        feature_m = np.load(os.path.join(_directory, _filename, f"{_filename}_3x14x14x13.npy"))
-        feature_l  = np.load(os.path.join(_directory, _filename, f"{_filename}_3x28x28x13.npy"))
+        feature_s  = np.load(os.path.join(_directory, _filename, f"{_filename}_5x7x7x13.npy"))
         
         ret['feature_s'] = feature_s
-        ret['feature_m'] = feature_m
-        ret['feature_l'] = feature_l
         
         return ret
         
