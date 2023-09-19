@@ -155,7 +155,6 @@ def test_ava(
 
 
             # Run NMS
-            targets[:, 2:] *= torch.Tensor([width, height, width, height]).to(device)  # to pixels # TODO: check the target scale
             lb = [targets[targets[:, 0] == i, 1:] for i in range(nb)] if save_hybrid else []  # for autolabelling
             t = time_synchronized()
             out = non_max_suppression(out_pred, conf_thres=conf_thres, iou_thres=iou_thres, labels=lb, multi_label=False)
@@ -176,13 +175,12 @@ def test_ava(
 
             # Predictions
             predn = pred.clone()
-            scale_coords(img[si].shape[1:], predn[:, :4], (h0[si], w0[si]))  # native-space pred # TODO: check the scale
 
             # Append to text file
             if save_txt:
-                gn = torch.tensor((h0[si], w0[si]))[[1, 0, 1, 0]]  # normalization gain whwh # TODO: check the scale
+                # gn = torch.tensor((h0[si], w0[si]))[[1, 0, 1, 0]]  # normalization gain whwh
                 for *xyxy, conf, cls in predn.tolist():
-                    xywh = (xyxy2xywh(torch.tensor(xyxy).view(1, 4)) / gn).view(-1).tolist()  # normalized xywh
+                    xywh = (xyxy2xywh(torch.tensor(xyxy).view(1, 4))).view(-1).tolist()  # normalized xywh
                     line = (cls, *xywh, conf) if save_conf else (cls, *xywh)  # label format
                     with open(save_dir / 'labels' / (path.stem + '.txt'), 'a') as f:
                         f.write(('%g ' * len(line)).rstrip() % line + '\n')
@@ -219,7 +217,6 @@ def test_ava(
 
                 # target boxes
                 tbox = xywh2xyxy(labels[:, 1:5])
-                scale_coords(img[si].shape[1:], tbox, (h0[si], w0[si]))  # native-space labels
                 if plots:
                     confusion_matrix.process_batch(predn, torch.cat((labels[:, 0:1], tbox), 1))
 
@@ -231,7 +228,7 @@ def test_ava(
                     # Search for detections
                     if pi.shape[0]:
                         # Prediction to target ious
-                        # ious, i = box_iou(predn[pi, :4], tbox[ti]).max(1) 
+
                         ious, i = box_iou(predn[pi, :4], tbox[ti]).max(1)  # best ious, indices of the target boxes that have the highest IoU with each prediction.
                         # Append detections
                         detected_set = set()
@@ -249,12 +246,22 @@ def test_ava(
 
         # Plot images
         if plots and batch_i < 10:
+            keyframes = un_normalized_images(img, mean=opt.DATA.MEAN ,std=opt.DATA.STD)
+            # target to output style
+            new_targets = [[] for _ in range(opt.batch_size_test)]
+            for target in targets.cpu().numpy():
+                img_id = target[0]
+                cls_id = target[1]
+                x1 = target[2] - target[4] /2
+                y1 = target[3] - target[5] /2
+                x2 = target[2] + target[4] /2
+                y2 = target[3] + target[5] /2
+                new_targets[int(img_id)].append([x1, y1, x2, y2, 1.0, cls_id])
+            new_targets = np.array(new_targets)
+              
             f = save_dir / f'test_ava_batch{batch_i}_labels.jpg'  # labels
-            targets[:, 2:] *= torch.Tensor([width, height, width, height]).to(device)  # to pixels # TODO: check the scale
-            Thread(target=plot_images, args=(img, targets, paths, f, names), daemon=True).start()
-            
+            Thread(target=plot_batch_image_from_preds, args=(keyframes.copy(), new_targets, str(f), labelmap_ava), daemon=True).start()
             f = save_dir / f'test_ava_batch{batch_i}_pred.jpg'  # predictions
-            keyframes = un_normalized_images(img)
             Thread(target=plot_batch_image_from_preds, args=(keyframes.copy(), out, str(f), labelmap_ava), daemon=True).start()
 
     # Compute statistics
@@ -328,10 +335,10 @@ def test_ava(
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(prog='test.py')
-    parser.add_argument('--weights', type=str, default='', help='model.pt path(s)')
+    parser.add_argument('--weights', type=str, default='runs/train/AVA_DF28/weights/init.pt', help='model.pt path(s)')
     parser.add_argument('--batch-size-test', type=int, default=1, help='size of each image batch')
     parser.add_argument('--img-size', type=int, default=224, help='inference size (pixels)')
-    parser.add_argument('--conf-thres', type=float, default=0.005, help='object confidence threshold')
+    parser.add_argument('--conf-thres', type=float, default=0.5, help='object confidence threshold')
     parser.add_argument('--iou-thres', type=float, default=0.5, help='IOU threshold for NMS')
     parser.add_argument('--task', default='val', help='train, val, test, speed or study')
     parser.add_argument('--device', default='', help='cuda device, i.e. 0 or 0,1,2,3 or cpu')
