@@ -14,5 +14,5 @@
 - [X] YOWO에서는 NMS 시 class 가 달라도 IoU가 threshold 이상이면 없애는 조금은 다른 로직을 사용하는 것을 발견.. (정석으로 갈지, YOWO대로 갈지 고민중)
 - [x] 코드 1차 정리 일단 TODO 리스트는 만들어놓았음 (Update: 2023-09-15)
 - [] (1) test AVA, 예측과 타겟의 bbox 스케일 확인
-- [] (2) loss_ava에서 입력되는 인풋에 따라 build_target에서 anchor 고르는 방법 달리하기.
+- [x] (2) loss_ava에서 입력되는 인풋에 따라 build_target에서 anchor 고르는 방법 달리하기. (Update: 23-09-19, 코드에 에러없이 훈련됨, 하지만 진짜 훈련이 되는지는 의문)
 - [] (3) 디버깅 하면서 loss 확인 및 하이퍼파라미터 튜닝
