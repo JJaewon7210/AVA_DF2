@@ -380,10 +380,10 @@ class ComputeLoss:
                 gw = t[:, 4]
                 gh = t[:, 5]
                 
-                gx1 = gx - gw //2
-                gy1 = gy - gh //2
-                gx2 = gx + gw //2
-                gy2 = gy + gh //2
+                gx1 = gx - gw /2
+                gy1 = gy - gh /2
+                gx2 = gx + gw /2
+                gy2 = gy + gh /2
                 
                 # Create masks for x and y coordinates based on the range defined by (gx1, gy1) to (gx2, gy2)
                 gx1_expanded = gx1.unsqueeze(-1).unsqueeze(-1).expand(-1, 7, 7)
