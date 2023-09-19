@@ -292,7 +292,7 @@ def main(hyp, opt, device, tb_writer):
                 f_act = save_dir / f'train_batch_act{plot_i}.jpg'  # filename
                 
                 keyframes = model_input[:, :, -1, :, :] # keyframes for plot
-                keyframes = un_normalized_images(keyframes)
+                keyframes = un_normalized_images(keyframes, mean=opt.DATA.MEAN ,std=opt.DATA.STD)
                 
                 preds_clo = torch.cat((out_bbox_infer, out_clo_infer), dim=2)
                 preds_clo = non_max_suppression(preds_clo, conf_thres=0.3, iou_thres=0.5, cls_thres=0.25, multi_label=True)
