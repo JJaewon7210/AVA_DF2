@@ -429,7 +429,7 @@ class AvaWithPseudoLabel(Ava):
         keyframe_info = self._image_paths[video_idx][frame_idx - 1]
         
         # Get the features path
-        _directory = os.path.dirname(keyframe_info).replace('frames', 'frame_features')
+        _directory = os.path.dirname(keyframe_info).replace('frames', 'frame_features_anchor5')
         _filename = os.path.splitext(os.path.basename(keyframe_info))[0]
 
         feature_s  = np.load(os.path.join(_directory, _filename, f"{_filename}_5x7x7x13.npy"))

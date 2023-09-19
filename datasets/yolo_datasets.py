@@ -1309,7 +1309,7 @@ class DeepFasion2WithPseudoLabel(LoadImagesAndLabels):
         super().__init__(path, img_size, batch_size, augment, hyp, rect, image_weights,
                  cache_images, single_cls, stride, pad, prefix)
         
-        self.path_feature = os.path.join(path.replace('images', 'features'))
+        self.path_feature = os.path.join(path.replace('images', 'features_anchor5'))
 
     def __getitem__(self, index):
         img, label, path, _shape = super().__getitem__(index)  # imgs, labels, path, _shapes
