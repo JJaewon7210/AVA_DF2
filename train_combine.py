@@ -295,7 +295,7 @@ def main(hyp, opt, device, tb_writer):
                 keyframes = un_normalized_images(keyframes)
                 
                 preds_clo = torch.cat((out_bbox_infer, out_clo_infer), dim=2)
-                preds_clo = non_max_suppression(preds_clo, conf_thres=0.3, iou_thres=0.5)
+                preds_clo = non_max_suppression(preds_clo, conf_thres=0.3, iou_thres=0.5, cls_thres=0.25, multi_label=True)
                 Thread(target=plot_batch_image_from_preds, args=(keyframes.copy(), preds_clo, str(f_clo), labelmap_df2), daemon=True).start()
                 
                 preds_act = torch.cat((out_bbox_infer, out_act_infer), dim=2)
