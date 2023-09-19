@@ -158,7 +158,7 @@ def main(hyp, opt, device, tb_writer):
     logger.info(f'Using {dataloader.num_workers} dataloader workers\n'
                 f'Logging results to {save_dir}\n'
                 f'Starting training for {epochs} epochs...')
-    LOSS = ComputeLoss(detector_head=model.head_bbox, hyp=hyp)
+    LOSS = ComputeLoss(detector_head=model.head_clo, hyp=hyp)
     WLOSS = WeightedMultiTaskLoss(num_tasks=4)
     
     # Start epoch ------------------------------------------------------------------------------------------------------
@@ -188,7 +188,7 @@ def main(hyp, opt, device, tb_writer):
                                             Each row in the labels contains: [Batch_num, class_num, x, y, h, w].
                 - paths (tuple[str]): List of image paths with length B.
                 - _shapes (tuple[tuple]): List of tuples, each containing (h0, w0), ((h / h0, w / w0), pad).
-                - pseudo_feature_DF2 (torch.float32): Features data with shape [B, 15, 7, 7], representing 3 (num_anchor) x 5 (bbox xywh + confidence score).
+                - pseudo_feature_DF2 (torch.float32): Features data with shape [B, 25, 7, 7], representing 5 (num_anchor) x 5 (bbox xywh + confidence score).
                 '''
                 imgs, labels, paths, _shapes, pseudo_feature_DF2 = item1
                 imgs = imgs.to(device, non_blocking=True).float() / 255.0  # uint8 to float32, 0-255 to 0.0-1.0
@@ -212,17 +212,16 @@ def main(hyp, opt, device, tb_writer):
             with amp.autocast(enabled=cuda):
                 out_bboxs, out_clos, out_acts = model(model_input)
                 
-                out_bbox_infer, out_bbox_features = out_bboxs[0], out_bboxs[1]
-                out_clo_infer, out_clo_features = out_clos[0], out_clos[1]
-                out_act_infer, out_act_features = out_acts[0], out_acts[1]
+                out_bbox_infer, out_bbox_features = out_bboxs[0], out_bboxs[1] # [B, 5, 7, 7, 5]
+                out_clo_infer, out_clo_features = out_clos[0], out_clos[1] # [B, 5, 7, 7, 13]
+                out_act_infer, out_act_features = out_acts[0], out_acts[1] # [B, 5, 7, 7, 80]
 
-                #TODO: Define the loss function
                 if select == 'DF2':
                     _dtype = out_bbox_features[0].dtype
                     pseudo_feature_DF2 = torch.tensor(pseudo_feature_DF2, dtype= _dtype, device=device)
                     pseudo_bbox = pseudo_feature_DF2.view(batch_size, na, 5, 7, 7).permute(0, 1, 3, 4, 2) # [B, na, 7, 7, (4+1)]
                     
-                    _lbox, _lobj, lclo, feature_mse_loss = LOSS.forward_df2(
+                    lclo, feature_mse_loss = LOSS.forward_df2(
                         p_clo=out_clo_features, 
                         p_bbox=out_bbox_features,
                         pseudo_bbox=pseudo_bbox,
@@ -233,7 +232,6 @@ def main(hyp, opt, device, tb_writer):
                 elif select == 'AVA':
                     _dtype = out_clo_features[0].dtype
                     pseudo_feature_AVA = torch.tensor(pseudo_feature_AVA, dtype= _dtype, device=device)
-                    pseudo_cloth = pseudo_feature_AVA[..., 5:]
                     
                     lbox, lobj, lact, feature_mse_loss = LOSS.forward_ava(
                         p_act=out_act_features, 
@@ -241,7 +239,7 @@ def main(hyp, opt, device, tb_writer):
                         t_cls=cls, 
                         t_bbox=boxes,
                         p_clo= out_clo_features, 
-                        pseudo_cloth= pseudo_cloth)
+                        pseudo_cloth= pseudo_feature_AVA)
                     
                     total_loss = lbox + lobj + lact + feature_mse_loss
 
@@ -399,34 +397,6 @@ def main(hyp, opt, device, tb_writer):
     # End training -----------------------------------------------------------------------------------------------------
 
 if __name__ == '__main__':
-    # For overwriting parameters of 'cfg/deepfashion2.yaml'
-    # You do not have to set the parameters below, if you set the correct paramters in 'cfg/deepfashion2.yaml'
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--weights', type=str, help='initial weights path')
-    parser.add_argument('--epochs', type=int)
-    parser.add_argument('--batch-size', type=int, help='total batch size for all GPUs')
-    parser.add_argument('--img-size', nargs='+', type=int, help='[train, test] image sizes')
-    parser.add_argument('--rect', action='store_true', help='rectangular training')
-    parser.add_argument('--resume', nargs='?', help='resume most recent training')
-    parser.add_argument('--nosave', action='store_true', help='only save final checkpoint')
-    parser.add_argument('--notest', action='store_true', help='only test final epoch')
-    parser.add_argument('--noautoanchor', action='store_true', help='disable autoanchor check')
-    parser.add_argument('--cache-images', action='store_true', help='cache images for faster training')
-    parser.add_argument('--image-weights', action='store_true', help='use weighted image selection for training')
-    parser.add_argument('--device', help='cuda device, i.e. 0 or 0,1,2,3 or cpu')
-    parser.add_argument('--single-cls', action='store_true', help='train multi-class data as single-class')
-    parser.add_argument('--sync-bn', action='store_true', help='use SyncBatchNorm, only available in DDP mode')
-    parser.add_argument('--local_rank', type=int, help='DDP parameter, do not modify')
-    parser.add_argument('--workers', type=int, help='maximum number of dataloader workers')
-    parser.add_argument('--project', default='runs/train', help='save to project/name')
-    parser.add_argument('--entity', default=None, help='W&B entity')
-    parser.add_argument('--name', default='exp', help='save to project/name')
-    parser.add_argument('--exist-ok', action='store_true', help='existing project/name ok, do not increment')
-    parser.add_argument('--bbox_interval', type=int, default=1, help='Set bounding-box image logging interval for W&B')
-    parser.add_argument('--save_period', type=int, default=-1, help='Log model after every "save_period" epoch')
-    parser.add_argument('--v5-metric', action='store_true', help='assume maximum recall as 1.0 in AP calculation')
-    parser.add_argument('--log_step', action='store_true', default= 100, help='after every logging_step record the performance to the wandb')
-    opt_ = parser.parse_args()
     
     # Import configuration files
     logging.basicConfig(level=logging.INFO, format="%(message)s")
@@ -450,7 +420,6 @@ if __name__ == '__main__':
     opt.merge(opt_df2)
     opt.merge(opt_ava)
     opt.merge(opt_model)
-    opt.merge(opt_) # overwrite
     
     # Resume
     wandb_run = check_wandb_resume(opt)
