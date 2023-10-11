@@ -9,7 +9,7 @@ During the training process, the model have different loss point acoording to th
 ![image](https://github.com/JJaewon7210/AVA_DF2/assets/96426723/982afe5e-e7dc-4def-97b1-efaa8327d7fc)
 
 We extract the pseudo label from teacher model to train the our model.
-
+![image](https://github.com/JJaewon7210/AVA_DF2/assets/96426723/472d9544-07c2-4b7d-80ae-7b8acc3bb130)
 
 ## Features
 
@@ -58,17 +58,10 @@ Follow these steps to use this project effectively:
    Train the model using the 'train_df2.py' script. You can monitor the training process using the WandB library. Customize hyperparameters and training options from the 'cfg/hyp.yaml' and 'cfg/deepfashion2.yaml' files.
 
 5. **Evaluating the Model:**
-   Evaluate the trained model by running the 'test\_df2.py' script.
+   Evaluate the trained model by running the 'test_df2.py' script.
 
 Download Pretrained Weights:** 
-You can obtain the pretrained weights. The following metrics are from the validation set of Deepfashion2.
-We trained the model for 50 epochs. The model with 'augmentTrue' applied data augmentation, while 'augmentFalse' indicates training without data augmentation.
-
-   | Pretrained Weights | Download Link | Size (pixels) | mAP(50) | mAP(50-95) | Precision | Recall |
-   | ------------------ | ------------- | ------------- | ------- | ---------- | --------- | ------ |
-   | Option1_augmentTrue  | [Link 1](https://drive.google.com/file/d/1x7G0XZSX6z2DXAhlKO6Cxb8pbU7dtEBY/view?usp=sharing) | [224, 224] | 0.2392 | 0.2177 | 0.3352 | 0.3781 |
-   | Option2_augmentFalse | [Link 2](https://drive.google.com/file/d/1DGrjDDPRc5AYTIhv8hMp5ws1IBfSv-Bl/view?usp=sharing) | [224, 224] | 0.2145 | 0.1918 | 0.4197 | 0.3118 |
-   | Option2_augmentTrue  | [Link 3](https://drive.google.com/file/d/1QhEC4wugfKCVZSU7wvvCLLIfVywAWpSy/view?usp=sharing) | [224, 224] | 0.2399 | 0.2112 | 0.4281 | 0.3643 |
+Comming soon..
 
 
 Enjoy working with YOWO and DeepFashion2!
