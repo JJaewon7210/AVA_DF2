@@ -15,7 +15,7 @@ We extract the pseudo label from teacher model to train the our model.
 
 One of the key features of this project is the ability to customize the loss function by using different 'build_target' methods. You can find these methods in the file 'utils/loss_ava.py'. Below are two options for updating the loss function:
 
-**Option 1:** 
+**Option 1:**  
 Update the 5 anchors (up, down, right, left, center) with the center as the center of the true label's bounding box.
 
 ```python
@@ -25,7 +25,7 @@ def df2_cls_loss(self, p, targets, BCEcls):  # predictions, targets, model
     tcls,_tbox, indices, _anchors = self.build_targets(p, targets, cls_target=True)  # targets
 ```
 
-**Option 2:** 
+**Option 2:**  
 Update all anchors included in the true label.
 
 
@@ -41,27 +41,27 @@ Usage
 
 Follow these steps to use this project effectively:
 
-1. **Clone the Repository:** \n
+1. **Clone the Repository:**  
    Begin by cloning this repository to your local machine.
 
-2.  **Download Pretrained Weights:** \n
+2.  **Download Pretrained Weights:**  
    You can obtain the pretrained weights from the following Google Drive links. Ensure to update the paths in the 'cfg/model.yaml' file.
     
     *   [resnext-101-kinetics.pth](https://drive.google.com/file/d/1633UbpB0UA73vuinYv19VZHNOY_825Vy/view?usp=sharing)
     *   [yolo.weights](https://drive.google.com/file/d/1lTNhAmaCm10W-uoCvdNsKSaEGoPBnHse/view?usp=sharing)
     *   [yowo_ava_16f_s1_best_ap_01790.pth](https://drive.google.com/file/d/1nk2Jkym3HCOP1ZIdZrvOgoZQYE8tivoB/view?usp=sharing)
 
-3. **Download Datasets:** \n
+3. **Download Datasets:**  
    Download the required datasets, namely `DeepFashion2` and `AVA 2.2 Activity Dataset.` Adjust the dataset paths in the `cfg/ava.yaml` and `cfg/deepfashion2.yaml` files.
 
-4. **Training Model:** \n
+4. **Training Model:**  
 Train the lodel using the `train_df2.py` script. You can monitor the training process using the WandB library. Customize hyperparameters and training options from the `cfg/hyp.yaml` and `cfg/deepfashion2.yaml` files.
 
-5. **Evaluation the Model:** \n
+5. **Evaluation the Model:**  
    Evaluate the trained model by running the `test_df2.py` script.
 
-**Download Pretrained Weights:**  \n
-Comming soon..
+**Download Pretrained Weights:**  
+Comming soon..  
 
 
 Enjoy working with YOWO and DeepFashion2!
