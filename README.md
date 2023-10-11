@@ -41,26 +41,26 @@ Usage
 
 Follow these steps to use this project effectively:
 
-1. **Clone the Repository:**
+1. **Clone the Repository:** \n
    Begin by cloning this repository to your local machine.
 
-2.  **Download Pretrained Weights:**
+2.  **Download Pretrained Weights:** \n
    You can obtain the pretrained weights from the following Google Drive links. Ensure to update the paths in the 'cfg/model.yaml' file.
     
     *   [resnext-101-kinetics.pth](https://drive.google.com/file/d/1633UbpB0UA73vuinYv19VZHNOY_825Vy/view?usp=sharing)
     *   [yolo.weights](https://drive.google.com/file/d/1lTNhAmaCm10W-uoCvdNsKSaEGoPBnHse/view?usp=sharing)
     *   [yowo_ava_16f_s1_best_ap_01790.pth](https://drive.google.com/file/d/1nk2Jkym3HCOP1ZIdZrvOgoZQYE8tivoB/view?usp=sharing)
 
-3. **Download Datasets:**
-   Download the required datasets, namely 'DeepFashion2' and 'AVA 2.2 Activity Dataset.' Adjust the dataset paths in the 'cfg/ava.yaml' and 'cfg/deepfashion2.yaml' files.
+3. **Download Datasets:** \n
+   Download the required datasets, namely `DeepFashion2` and `AVA 2.2 Activity Dataset.` Adjust the dataset paths in the `cfg/ava.yaml` and `cfg/deepfashion2.yaml` files.
 
-4. **Training the Model:**
-   Train the model using the 'train_df2.py' script. You can monitor the training process using the WandB library. Customize hyperparameters and training options from the 'cfg/hyp.yaml' and 'cfg/deepfashion2.yaml' files.
+4. **Training Model:** \n
+Train the lodel using the `train_df2.py` script. You can monitor the training process using the WandB library. Customize hyperparameters and training options from the `cfg/hyp.yaml` and `cfg/deepfashion2.yaml` files.
 
-5. **Evaluating the Model:**
-   Evaluate the trained model by running the 'test_df2.py' script.
+5. **Evaluation the Model:** \n
+   Evaluate the trained model by running the `test_df2.py` script.
 
-Download Pretrained Weights:** 
+**Download Pretrained Weights:**  \n
 Comming soon..
 
 
