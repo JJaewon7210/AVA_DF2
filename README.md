@@ -1,10 +1,14 @@
 # Learning together! AVA2.2 and DeepFashion2 Training Project
 
-This project focuses on training a model using the DeepFashion2 dataset and AVA 2.2 dataset simultaneously while freezing the network of YOWO (You Only Watch Once).
+This project focuses on training a model using the DeepFashion2 dataset and AVA 2.2 dataset simultaneously.
+During the training process, the model have different loss point acoording to the inputted data.
 
-![image](https://github.com/JJaewon7210/AVA_DF2_Compare1/assets/96426723/6fde3595-0a69-45b5-99be-172d16405063)
 
-![image](https://github.com/JJaewon7210/AVA_DF2_Compare1/assets/96426723/bab7f689-58a4-4956-8024-35a95f3a590b)
+![image](https://github.com/JJaewon7210/AVA_DF2/assets/96426723/afbbe4d7-0e01-4c3c-a7b9-4b9a05c2b905)
+
+![image](https://github.com/JJaewon7210/AVA_DF2/assets/96426723/982afe5e-e7dc-4def-97b1-efaa8327d7fc)
+
+We extract the pseudo label from teacher model to train the our model.
 
 
 ## Features
