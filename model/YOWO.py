@@ -18,7 +18,6 @@ from utils.general import ConfigObject
 # from model.cfam import CFAMBlock
 from model.resnext import resnext101
 from model.darknet import Darknet
-from model.BiFPN import BiFPN
 from model.cfam import CFAMBlock
 
 # Detection Head
